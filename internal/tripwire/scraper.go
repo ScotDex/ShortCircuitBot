@@ -3,12 +3,6 @@ package tripwire
 
 import "net/http"
 
-// Scraper handles the connection and data fetching from Tripwire.
-type Scraper struct {
-    client   *http.Client // The HTTP client with a cookie jar
-    username string
-    password string
-}
 
 // NewScraper creates a new Tripwire scraper.
 func NewScraper(user, pass string) *Scraper {
