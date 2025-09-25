@@ -11,7 +11,7 @@ This project is to create a Go-based Discord bot that provides EVE Online pilots
 ### 1. Tripwire Data Integration
 
 The bot will access tripwire and grab the existing maps.
-* Short circuit web scrapes, do I do the same? Or try get connection to the DB?
+*~~ Short circuit web scrapes, do I do the same? Or try get connection to the DB?~~
 * Parsing this data to understand the origin, destination, and characteristics (e.g., size, stability) of each wormhole.
 * Do I creare a generated route or integrate options?.
 
@@ -22,6 +22,14 @@ Using the combined map of static stargate data and live Tripwire wormhole data, 
 * Present the resulting route to the user in a clear, step-by-step format within Discord.
 
 ***
+
+### 3. User Interaction
+
+* Do I integrate the thera bot idea?
+* Integrate API for eve scout?
+
+***
+
 
 ## Primary User Command
 

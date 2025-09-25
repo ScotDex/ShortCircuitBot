@@ -53,8 +53,8 @@ type Signature struct {
 // partially assumed until a full wormhole object is seen in the JSON.
 type Wormhole struct {
 	ID          string `json:id`
-	InitialID   string `json:initialID`
-	SecondaryID string `json:secondaryID`
+	InitialID   string `json:"initialID"`
+	SecondaryID string `json:"secondaryID"`
 	Type        string `json:"type"`
 	Parent      string `json:"parent"`
 	Life        string `json:"life"`
