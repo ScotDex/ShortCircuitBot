@@ -60,3 +60,4 @@ type Wormhole struct {
 	Life        string `json:"life"`
 	Mass        string `json:"mass"`
 }
+
