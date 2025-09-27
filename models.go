@@ -61,3 +61,9 @@ type Wormhole struct {
 	Mass        string `json:"mass"`
 }
 
+type Direction struct {
+	ID          string  `json:"id"`
+	SystemID    string  `json:"systemID"`
+	Type        string  `json:"type"`
+	SignatureID *string `json:"signatureID"`
+}
