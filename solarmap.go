@@ -9,36 +9,6 @@ import (
 	"strconv"
 )
 
-type TripwireData struct {
-	Signatures map[string]Signature `json:"signatures"`
-	Wormholes  map[string]Wormhole  `json:"wormholes"`
-}
-
-// You already have a Signature struct, this is the new one
-type Wormhole struct {
-	InitialID   string `json:"initialID"`
-	SecondaryID string `json:"secondaryID"`
-	// You can add other fields like Life and Mass if you need them later
-}
-
-type Signature struct {
-	ID             string      `json:"id"`
-	SignatureID    *string     `json:"signatureID"`
-	SystemID       string      `json:"systemID"`
-	Type           string      `json:"type"`
-	Name           *string     `json:"name"`
-	Bookmark       interface{} `json:"bookmark"` // Use interface{} for mixed or null types
-	LifeTime       string      `json:"lifeTime"`
-	LifeLeft       string      `json:"lifeLeft"`
-	LifeLength     string      `json:"lifeLength"`
-	CreatedByID    string      `json:"createdByID"`
-	CreatedByName  string      `json:"createdByName"`
-	ModifiedByID   string      `json:"modifiedByID"`
-	ModifiedByName string      `json:"modifiedByName"`
-	ModifiedTime   string      `json:"modifiedTime"`
-	MaskID         string      `json:"maskID"`
-}
-
 // BuildGraphFromCSV reads mapSolarSystemJumps.csv and returns a graph as adjacency list.
 func BuildGraphFromCSV(filename string) (map[int][]int, error) {
 	file, err := os.Open(filename)
@@ -196,36 +166,4 @@ func FindShortestPath(graph map[int][]int, startID, endID int) []int {
 
 	// If the queue runs out and we haven't found the end, no path exists
 	return nil
-}
-
-func main() {
-	log.Println("--- Running Route Finder Test ---")
-
-	// Step 1: Load the existing Tripwire data
-	tripwireData, err := loadTripwireData("tripwire_data.json")
-	if err != nil {
-		log.Fatalf("Failed to load tripwire data: %v", err)
-	}
-	log.Printf("Loaded data with %d signatures and %d wormholes.", len(tripwireData.Signatures), len(tripwireData.Wormholes))
-
-	// Step 2: Build the graph with both stargates and wormholes
-	graph, err := GraphBuilder(tripwireData)
-	if err != nil {
-		log.Fatalf("Failed to build graph: %v", err)
-	}
-
-	// Step 3: Define start and end points and find the path
-	startSystemID := 30002523 // An example system from your previous data
-	endSystemID := 30002523   // The system ID for Jita
-
-	log.Printf("Searching for a route from %d to %d...", startSystemID, endSystemID)
-	path := FindShortestPath(graph, startSystemID, endSystemID)
-
-	// Step 4: Display the result
-	if path != nil {
-		log.Printf("✅ Path found! It has %d jumps.", len(path)-1)
-		log.Println("Route:", path)
-	} else {
-		log.Println("❌ No path could be found between the two systems.")
-	}
 }

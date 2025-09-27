@@ -23,7 +23,12 @@ Using the combined map of static stargate data and live Tripwire wormhole data, 
 
 ***
 
-### 3. User Interaction
+### 3. Notes on Complications/Developments
+* Bot needs to be aware of lifespan of WH in question
+* ESI converter required
+* User testing required
+
+### 4. User Interaction
 
 * Do I integrate the thera bot idea?
 * Integrate API for eve scout?

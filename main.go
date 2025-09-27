@@ -8,18 +8,6 @@ import (
 	"syscall"
 )
 
-type TripwireData struct {
-	Signatures map[string]Signature `json:"signatures"`
-	Wormholes  map[string]Wormhole  `json:"wormholes"`
-}
-
-// You already have a Signature struct, this is the new one
-type Wormhole struct {
-	InitialID   string `json:"initialID"`
-	SecondaryID string `json:"secondaryID"`
-	// You can add other fields like Life and Mass if you need them later
-}
-
 func main() {
 	log.Println("--- Starting ShortCircuitBot ---")
 
