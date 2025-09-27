@@ -46,15 +46,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("TRIPWIRE_PASS is not set in the environment")
 	}
 
-	//DiscordWebHook := os.Getenv("DISCORD_WEB_HOOK")
-	//if tripwirePass == "" {
-	//	return nil, fmt.Errorf("DISCORD_WEB_HOOK is not set in the environment")
-	//}
+	DiscordWebHook := os.Getenv("DISCORD_WEB_HOOK")
+	if tripwirePass == "" {
+		return nil, fmt.Errorf("DISCORD_WEB_HOOK is not set in the environment")
+	}
 
 	return &Config{
-		BotToken:     botToken,
-		TripwireURL:  tripwireURL,
-		TripwireUser: tripwireUser,
-		TripwirePass: tripwirePass,
+		BotToken:       botToken,
+		TripwireURL:    tripwireURL,
+		TripwireUser:   tripwireUser,
+		TripwirePass:   tripwirePass,
+		DiscordWebHook: DiscordWebHook,
 	}, nil
 }

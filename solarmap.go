@@ -131,31 +131,30 @@ func loadTripwireData(filename string) (*TripwireData, error) {
 }
 
 // FindShortestPath uses Breadth-First Search to find the shortest path in jumps.
-func FindShortestPath(graph map[int][]int, startID, endID int) []int {
-	// A queue of paths to check
+// FindShortestPath now accepts a map of system IDs to avoid.
+func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int]bool) []int {
 	queue := [][]int{{startID}}
-	// A map to keep track of systems we've already visited to avoid loops
 	visited := make(map[int]bool)
 	visited[startID] = true
 
+	// Check if the start or end systems are on the avoid list.
+	if avoidList[startID] || avoidList[endID] {
+		return nil
+	}
+
 	for len(queue) > 0 {
-		// Get the first path from the queue
 		path := queue[0]
 		queue = queue[1:]
-
-		// Get the last system in the current path
 		currentSystem := path[len(path)-1]
 
-		// If we've found our destination, we're done!
 		if currentSystem == endID {
 			return path
 		}
 
-		// Otherwise, look at its neighbors
 		for _, neighbor := range graph[currentSystem] {
-			if !visited[neighbor] {
+			// Check if the neighbor is on the avoid list OR has been visited.
+			if !visited[neighbor] && !avoidList[neighbor] {
 				visited[neighbor] = true
-				// Create a new path by adding the neighbor to the current one
 				newPath := make([]int, len(path))
 				copy(newPath, path)
 				newPath = append(newPath, neighbor)
@@ -164,6 +163,5 @@ func FindShortestPath(graph map[int][]int, startID, endID int) []int {
 		}
 	}
 
-	// If the queue runs out and we haven't found the end, no path exists
 	return nil
 }
