@@ -28,7 +28,8 @@ FROM alpine:latest
 
 # Copy only the compiled binary from the 'builder' stage.
 # None of the source code or build tools are included in the final image.
-COPY --from=builder /shortcircuit-bot
+COPY --from=builder /shortcircuit-bot /shortcircuit-bot
+
 
 COPY mapSolarSystemJumps.csv .
 COPY systems_cache.json .
