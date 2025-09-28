@@ -65,7 +65,7 @@ func main() {
 
 	// 4. Create and run services (same as before)
 	var graphMutex sync.RWMutex
-	fetcherService, err := New(cfg.TripwireURL, cfg.TripwireUser, cfg.TripwirePass, universeGraph, &graphMutex, eveScoutClient)
+	fetcherService, err := New(cfg.TripwireURL, cfg.TripwireUser, cfg.TripwirePass, universeGraph, &graphMutex, eveScoutClient, esiClient)
 	if err != nil {
 		log.Fatalf("FATAL: Could not create fetcher service: %v", err)
 	}

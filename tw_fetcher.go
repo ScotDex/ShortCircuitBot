@@ -133,7 +133,7 @@ type Fetcher struct {
 	// esiClient:         esi, // Add ESIClient here
 }
 
-func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *EveScoutClient) (*Fetcher, error) {
+func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *EveScoutClient, esiClient *ESIClient) (*Fetcher, error) {
 	scraper, err := NewScraper(url, user, pass)
 	if err != nil {
 		return nil, err
