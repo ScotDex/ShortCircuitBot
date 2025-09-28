@@ -130,7 +130,6 @@ type Fetcher struct {
 	eveScoutClient    *EveScoutClient
 	esiClient         *ESIClient // Add ESIClient here
 	baseStargateGraph map[int][]int
-	// esiClient:         esi, // Add ESIClient here
 }
 
 func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *EveScoutClient, esiClient *ESIClient) (*Fetcher, error) {
@@ -152,7 +151,7 @@ func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *
 		universeGraph:     graph,
 		graphMutex:        mutex,
 		eveScoutClient:    NewEveScoutClient("ShortCircuitBot/0.1"), // Initialize EveScoutClient here
-		esiClient:         nil,                                      // ESIClient needs to be passed in or initialized
+		esiClient:         esiClient,                                // ESIClient needs to be passed in or initialized
 		baseStargateGraph: baseGraph,
 	}, nil
 }
