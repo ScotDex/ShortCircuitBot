@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +130,7 @@ type Fetcher struct {
 	eveScoutClient    *EveScoutClient
 	esiClient         *ESIClient // Add ESIClient here
 	baseStargateGraph map[int][]int
+	// esiClient:         esi, // Add ESIClient here
 }
 
 func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *EveScoutClient) (*Fetcher, error) {
@@ -227,7 +229,30 @@ func (s *Fetcher) fetchAndSaveData() {
 	}
 
 	// 2. Add the new data
-	AddTripwireWormholesToGraph(newGraph, tripwireData, nil) // s.esiClient is not available here, pass nil for now
+	if tripwireData != nil {
+		log.Println("[FETCHER] Processing and validating Tripwire data...")
+		for _, wh := range tripwireData.Wormholes {
+			// This is the validation check
+			if wh.InitialID == "???" || wh.SecondaryID == "???" {
+				continue // Skip this wormhole
+			}
+
+			sigA, okA := tripwireData.Signatures[wh.InitialID]
+			sigB, okB := tripwireData.Signatures[wh.SecondaryID]
+
+			if okA && okB {
+				sysA_ID, _ := strconv.Atoi(sigA.SystemID)
+				sysB_ID, _ := strconv.Atoi(sigB.SystemID)
+
+				if sysA_ID != 0 && sysB_ID != 0 {
+					newGraph[sysA_ID] = append(newGraph[sysA_ID], sysB_ID)
+					newGraph[sysB_ID] = append(newGraph[sysB_ID], sysA_ID)
+					s.esiClient.GetSystemName(sysA_ID)
+					s.esiClient.GetSystemName(sysB_ID)
+				}
+			}
+		}
+	} // s.esiClient is not available here, pass nil for now
 	for _, route := range allScoutRoutes {
 		newGraph[route.InSystemID] = append(newGraph[route.InSystemID], route.OutSystemID)
 		newGraph[route.OutSystemID] = append(newGraph[route.OutSystemID], route.InSystemID)
