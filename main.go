@@ -78,6 +78,7 @@ func main() {
 	servicesWg.Add(2)
 	go fetcherService.Start(&servicesWg, quit)
 	go botService.Start(&servicesWg, quit)
+	go startHealthCheckServer()
 
 	servicesWg.Wait()
 	log.Println("--- All services have shut down. Exiting. ---")

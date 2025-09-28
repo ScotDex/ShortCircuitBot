@@ -127,11 +127,11 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 
 		if pathNames == nil {
 			embed = &discordgo.MessageEmbed{
-				Title:       fmt.Sprintf("Route Not Found"),
-				Description: fmt.Sprintf("No path could be found between **%s** and **%s**.", startName, endName),
+
+				Description: fmt.Sprintf("No shortcut possible between **%s** and **%s**.", startName, endName),
 				Color:       0xff0000, // Red
 			}
-			// In bot_service.go, inside the interactionCreate function
+
 		} else {
 			// Format the path with a block quote for better readability
 			routeString := fmt.Sprintf("> %s", strings.Join(pathNames, "\n> → "))
