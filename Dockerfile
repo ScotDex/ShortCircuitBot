@@ -32,7 +32,7 @@ COPY --from=builder /shortcircuit-bot /shortcircuit-bot
 
 
 COPY mapSolarSystemJumps.csv .
-COPY systems_cache.json .
+COPY system_cache.json .
 COPY tripwire_data.json .
 
 # Set the command that will be executed when the container starts.
