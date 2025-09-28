@@ -6,11 +6,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-// --- Service Definition ---
 
 type Service struct {
 	token         string
@@ -27,8 +26,6 @@ func NewService(token string, graph map[int][]int, mutex *sync.RWMutex, esi *ESI
 		esiClient:     esi,
 	}
 }
-
-// --- Service Lifecycle ---
 
 func (s *Service) Start(wg *sync.WaitGroup, quit chan os.Signal) {
 	defer wg.Done()
@@ -123,9 +120,9 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	} else {
 
 		avoidList := make(map[int]bool)
-		avoidList[30100000] = true // Zarzakh's System ID
+		avoidList[30100000] = true
 		s.graphMutex.RLock()
-		pathNames := FindAndConvertPath(s.universeGraph, startID, endID, s.esiClient, avoidList)
+		pathNames := FindAndConvertPath(s.universeGraph, startID, endID, s.esiClient, avoidList) // This line was already correct
 		s.graphMutex.RUnlock()
 
 		if pathNames == nil {
@@ -134,13 +131,49 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Description: fmt.Sprintf("No path could be found between **%s** and **%s**.", startName, endName),
 				Color:       0xff0000, // Red
 			}
+			// In bot_service.go, inside the interactionCreate function
 		} else {
+			// Format the path with a block quote for better readability
+			routeString := fmt.Sprintf("> %s", strings.Join(pathNames, "\n> → "))
+
+			// Choose a color based on the number of jumps
+			jumpCount := len(pathNames) - 1
+			embedColor := 0x4CAF50 // Green for short routes
+			if jumpCount > 10 {
+				embedColor = 0xFFC107 // Amber for medium routes
+			}
+			if jumpCount > 20 {
+				embedColor = 0xF44336 // Red for long routes
+			}
+
 			embed = &discordgo.MessageEmbed{
-				Title:       fmt.Sprintf("Route from %s to %s", startName, endName),
-				Description: fmt.Sprintf("`%s`", strings.Join(pathNames, " → ")),
-				Color:       0x00ff00, // Green
+				Author: &discordgo.MessageEmbedAuthor{
+					Name:    "ShortCircuit Route Planner",
+					IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64",
+				},
+				Title:       "Route Calculated",
+				Color:       embedColor,
+				Timestamp:   time.Now().Format(time.RFC3339),
+				Description: routeString,
+				Fields: []*discordgo.MessageEmbedField{
+					{
+						Name:   "Start",
+						Value:  startName,
+						Inline: true,
+					},
+					{
+						Name:   "End",
+						Value:  endName,
+						Inline: true,
+					},
+					{
+						Name:   "Jumps",
+						Value:  fmt.Sprintf("%d", jumpCount),
+						Inline: true,
+					},
+				},
 				Footer: &discordgo.MessageEmbedFooter{
-					Text: fmt.Sprintf("%d jumps", len(pathNames)-1),
+					Text: "Zarzakh is currently avoided.",
 				},
 			}
 		}

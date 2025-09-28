@@ -62,35 +62,38 @@ func DeduplicateNeighbors(graph map[int][]int) {
 	}
 }
 
-// AddTripwireWormholesToGraph integrates real-time wormhole data to the graph.
-// tripwireData is a map of signature ID to Signature, representing wormhole signatures.
-// Pass the whole TripwireData object to the function now
-func AddTripwireWormholesToGraph(graph map[int][]int, data *TripwireData) {
-	// Loop through each wormhole connection provided by the data
+// In the file with your graph logic
+
+func AddTripwireWormholesToGraph(graph map[int][]int, data *TripwireData, esiClient *ESIClient) {
+	if data == nil || esiClient == nil {
+		return
+	}
+
+	addedCount := 0
 	for _, wh := range data.Wormholes {
-		// Find the full signature details for each end of the wormhole
 		sigA, okA := data.Signatures[wh.InitialID]
 		sigB, okB := data.Signatures[wh.SecondaryID]
 
-		// If both ends exist in the signatures map...
 		if okA && okB {
-			// ...get their system IDs
-			sysA, errA := strconv.Atoi(sigA.SystemID)
-			sysB, errB := strconv.Atoi(sigB.SystemID)
+			sysA_ID, _ := strconv.Atoi(sigA.SystemID)
+			sysB_ID, _ := strconv.Atoi(sigB.SystemID)
 
-			if errA == nil && errB == nil {
-				// ...and add the two-way jump to the graph
-				graph[sysA] = append(graph[sysA], sysB)
-				graph[sysB] = append(graph[sysB], sysA)
+			if sysA_ID != 0 && sysB_ID != 0 {
+				graph[sysA_ID] = append(graph[sysA_ID], sysB_ID)
+				graph[sysB_ID] = append(graph[sysB_ID], sysA_ID)
+				addedCount++
+
+				// Proactively look up the names for these systems and cache them.
+				esiClient.GetSystemName(sysA_ID)
+				esiClient.GetSystemName(sysB_ID)
 			}
 		}
 	}
-
-	log.Printf("Successfully processed and added %d wormhole connections.", len(data.Wormholes))
+	log.Printf("Successfully processed and added %d wormhole connections from Tripwire.", addedCount)
 }
 
 // The parameter needs to change to accept all the new data
-func GraphBuilder(data *TripwireData) (map[int][]int, error) {
+func GraphBuilder(data *TripwireData, esiClient *ESIClient) (map[int][]int, error) {
 	graph, err := BuildGraphFromCSV("mapSolarSystemJumps.csv")
 	if err != nil {
 		// It's better to return an error than to call log.Fatal here
@@ -100,7 +103,7 @@ func GraphBuilder(data *TripwireData) (map[int][]int, error) {
 
 	// Now, call your new and improved function to add wormholes!
 	if data != nil {
-		AddTripwireWormholesToGraph(graph, data)
+		AddTripwireWormholesToGraph(graph, data, esiClient) // Pass nil for esiClient for now
 	}
 
 	// This debug printing is great for checking your work
@@ -119,9 +122,20 @@ func GraphBuilder(data *TripwireData) (map[int][]int, error) {
 func loadTripwireData(filename string) (*TripwireData, error) {
 	file, err := os.ReadFile(filename)
 	if err != nil {
+		// If the file doesn't exist, that's okay.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
+	// --- THIS IS THE FIX ---
+	// If the file is empty, also treat it as a "no data" scenario.
+	if len(file) == 0 {
+		return nil, nil
+	}
+
+	// If the file has content, try to parse it as before.
 	var data TripwireData
 	if err := json.Unmarshal(file, &data); err != nil {
 		return nil, err
@@ -130,8 +144,6 @@ func loadTripwireData(filename string) (*TripwireData, error) {
 	return &data, nil
 }
 
-// FindShortestPath uses Breadth-First Search to find the shortest path in jumps.
-// FindShortestPath now accepts a map of system IDs to avoid.
 func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int]bool) []int {
 	queue := [][]int{{startID}}
 	visited := make(map[int]bool)

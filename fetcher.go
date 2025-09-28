@@ -123,10 +123,12 @@ func (s *Scraper) FetchData() (*TripwireData, error) {
 }
 
 type Fetcher struct {
-	scraper        *Scraper
-	universeGraph  map[int][]int
-	graphMutex     *sync.RWMutex
-	eveScoutClient *EveScoutClient
+	scraper           *Scraper
+	universeGraph     map[int][]int
+	graphMutex        *sync.RWMutex
+	eveScoutClient    *EveScoutClient
+	esiClient         *ESIClient // Add ESIClient here
+	baseStargateGraph map[int][]int
 }
 
 func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *EveScoutClient) (*Fetcher, error) {
@@ -135,11 +137,21 @@ func New(url, user, pass string, graph map[int][]int, mutex *sync.RWMutex, esc *
 		return nil, err
 	}
 
+	baseGraph := make(map[int][]int, len(graph))
+	for k, v := range graph {
+		// Ensure the slice is also copied, not just referenced
+		newSlice := make([]int, len(v))
+		copy(newSlice, v)
+		baseGraph[k] = newSlice
+	}
+
 	return &Fetcher{
-		scraper:        scraper,
-		universeGraph:  graph,
-		graphMutex:     mutex,
-		eveScoutClient: NewEveScoutClient("ShortCircuitBot/0.1"), // Initialize EveScoutClient here
+		scraper:           scraper,
+		universeGraph:     graph,
+		graphMutex:        mutex,
+		eveScoutClient:    NewEveScoutClient("ShortCircuitBot/0.1"), // Initialize EveScoutClient here
+		esiClient:         nil,                                      // ESIClient needs to be passed in or initialized
+		baseStargateGraph: baseGraph,
 	}, nil
 }
 
@@ -170,40 +182,74 @@ func (s *Fetcher) Start(wg *sync.WaitGroup, quit chan os.Signal) {
 	}
 }
 
+// In fetcher_service.go
 func (s *Fetcher) fetchAndSaveData() {
-	log.Println("[FETCHER] Fetching latest Tripwire data...")
-	data, err := s.scraper.FetchData()
-	if err != nil {
-		log.Printf("[FETCHER] WARNING: Data fetch failed: %v", err)
-		return
-	}
-	log.Printf("✅ [FETCHER] Successfully fetched data for %d signatures and %d wormholes.", len(data.Signatures), len(data.Wormholes))
+	log.Println("[FETCHER] Concurrently fetching all wormhole data...")
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	log.Println("[FETCHER] Fetching latest Thera data...")
-	theraConnections, err := s.eveScoutClient.GetRoutesBySystem("Thera")
-	if err != nil {
-		log.Printf("[FETCHER] WARNING: Failed to fetch Thera data: %v", err)
+	var tripwireData *TripwireData
+	var allScoutRoutes []Route // Changed from theraConnections
+	var tripwireErr, scoutErr error
+
+	// Task 1: Fetch Tripwire data
+	go func() {
+		defer wg.Done()
+		tripwireData, tripwireErr = s.scraper.FetchData()
+	}()
+
+	// Task 2: Fetch all Eve-Scout routes
+	go func() {
+		defer wg.Done()
+		allScoutRoutes, scoutErr = s.eveScoutClient.GetAllRoutes()
+	}()
+
+	wg.Wait() // Wait for both fetches to complete
+
+	// Check for errors
+	if tripwireErr != nil {
+		log.Printf("[FETCHER] WARNING: Tripwire data fetch failed: %v", tripwireErr)
+		return // Exit if Tripwire fails
+	}
+	if scoutErr != nil {
+		log.Printf("[FETCHER] WARNING: Eve-Scout data fetch failed: %v", scoutErr)
+	}
+	log.Println("✅ [FETCHER] All data fetched successfully.")
+
+	// --- EFFICIENT GRAPH UPDATE ---
+
+	// 1. Create a fresh copy of the cached stargate map. This is much faster than reading from disk.
+	newGraph := make(map[int][]int, len(s.baseStargateGraph))
+	for k, v := range s.baseStargateGraph {
+		newSlice := make([]int, len(v))
+		copy(newSlice, v)
+		newGraph[k] = newSlice
 	}
 
-	log.Println("[FETCHER] Updating the universe graph with new wormhole data...")
+	// 2. Add the new data
+	AddTripwireWormholesToGraph(newGraph, tripwireData, nil) // s.esiClient is not available here, pass nil for now
+	for _, route := range allScoutRoutes {
+		newGraph[route.InSystemID] = append(newGraph[route.InSystemID], route.OutSystemID)
+		newGraph[route.OutSystemID] = append(newGraph[route.OutSystemID], route.InSystemID)
+	}
+	DeduplicateNeighbors(newGraph)
+
+	// 3. Lock, atomically swap the old graph with the new one, then unlock.
 	s.graphMutex.Lock()
-	defer s.graphMutex.Unlock()
+	s.universeGraph = newGraph
+	s.graphMutex.Unlock()
+	log.Println("✅ [FETCHER] Universe graph has been updated.")
 
-	baseGraph, err := BuildGraphFromCSV("mapSolarSystemJumps.csv")
+	// 4. Save the new Tripwire data to a local file for the next startup.
+	jsonData, err := json.MarshalIndent(tripwireData, "", "  ")
 	if err != nil {
-		log.Printf("[FETCHER] ERROR: Failed to rebuild base stargate graph: %v", err)
+		log.Printf("[FETCHER] ERROR: Failed to marshal data to JSON: %v", err)
 		return
 	}
-	s.universeGraph = baseGraph
-
-	AddTripwireWormholesToGraph(s.universeGraph, data)
-
-	for _, theraWH := range theraConnections {
-		s.universeGraph[theraWH.InSystemID] = append(s.universeGraph[theraWH.InSystemID], theraWH.OutSystemID)
-		s.universeGraph[theraWH.OutSystemID] = append(s.universeGraph[theraWH.OutSystemID], theraWH.InSystemID)
+	err = os.WriteFile("tripwire_data.json", jsonData, 0644)
+	if err != nil {
+		log.Printf("[FETCHER] ERROR: Failed to write data to file: %v", err)
+		return
 	}
-
-	DeduplicateNeighbors(s.universeGraph)
-
-	log.Println("✅ [FETCHER] Universe graph has been updated with live wormhole data.")
+	log.Println("✅ [FETCHER] Successfully updated local data file: tripwire_data.json")
 }

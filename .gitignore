@@ -1,3 +1,4 @@
 .env
 tripwire_data.json
 mapSolarSystemJumps.csv
+system_cache.json

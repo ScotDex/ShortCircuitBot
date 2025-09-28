@@ -7,44 +7,6 @@ import (
 	"time"
 )
 
-// --- Structs (kept the same) ---
-
-type ApiHealth struct {
-	Version string `json:"api_version"`
-}
-
-type Route struct {
-	ID              string    `json:"id"`
-	CreatedAt       time.Time `json:"created_at"`
-	CreatedByID     int       `json:"created_by_id"`
-	CreatedByName   string    `json:"created_by_name"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	UpdatedByID     int       `json:"updated_by_id"`
-	UpdatedByName   string    `json:"updated_by_name"`
-	CompletedAt     time.Time `json:"completed_at"`
-	CompletedByID   int       `json:"completed_by_id"`
-	CompletedByName string    `json:"completed_by_name"`
-	Completed       bool      `json:"completed"`
-	WhExitsOutward  bool      `json:"wh_exits_outward"`
-	WhType          string    `json:"wh_type"`
-	MaxShipSize     string    `json:"max_ship_size"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	RemainingHours  int       `json:"remaining_hours"`
-	SignatureType   string    `json:"signature_type"`
-	OutSystemID     int       `json:"out_system_id"`
-	OutSystemName   string    `json:"out_system_name"`
-	OutSignature    string    `json:"out_signature"`
-	InSystemID      int       `json:"in_system_id"`
-	InSystemClass   string    `json:"in_system_class"`
-	InSystemName    string    `json:"in_system_name"`
-	InRegionID      int       `json:"in_region_id"`
-	InRegionName    string    `json:"in_region_name"`
-	InSignature     string    `json:"in_signature"`
-	Comment         string    `json:"comment"`
-}
-
-// --- API Client ---
-
 // EveScoutClient manages all communication with the EVE-Scout API.
 type EveScoutClient struct {
 	baseURL    string
@@ -87,18 +49,6 @@ func (c *EveScoutClient) makeRequest(endpoint string, target interface{}) error 
 	}
 
 	return nil
-}
-
-// --- Client Methods ---
-
-// CheckApiHealth checks the health of the EVE-Scout API.
-func (c *EveScoutClient) CheckApiHealth() (*ApiHealth, error) {
-	var healthStatus ApiHealth
-	err := c.makeRequest("/health", &healthStatus)
-	if err != nil {
-		return nil, err
-	}
-	return &healthStatus, nil
 }
 
 // GetRoutesBySystem fetches all public signatures for a specific system.
