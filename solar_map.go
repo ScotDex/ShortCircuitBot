@@ -150,37 +150,3 @@ func loadTripwireData(filename string) (*TripwireData, error) {
 
 	return &data, nil
 }
-
-func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int]bool) []int {
-	queue := [][]int{{startID}}
-	visited := make(map[int]bool)
-	visited[startID] = true
-
-	// Check if the start or end systems are on the avoid list.
-	if avoidList[startID] || avoidList[endID] {
-		return nil
-	}
-
-	for len(queue) > 0 {
-		path := queue[0]
-		queue = queue[1:]
-		currentSystem := path[len(path)-1]
-
-		if currentSystem == endID {
-			return path
-		}
-
-		for _, neighbor := range graph[currentSystem] {
-			// Check if the neighbor is on the avoid list OR has been visited.
-			if !visited[neighbor] && !avoidList[neighbor] {
-				visited[neighbor] = true
-				newPath := make([]int, len(path))
-				copy(newPath, path)
-				newPath = append(newPath, neighbor)
-				queue = append(queue, newPath)
-			}
-		}
-	}
-
-	return nil
-}

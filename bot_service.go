@@ -128,7 +128,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	} else {
 		avoidList := make(map[int]bool)
 
-		// Parse exclude systems and build avoid list
 		if excludeInput != "" {
 			excludeSystems := strings.Split(excludeInput, ",")
 			for _, sysName := range excludeSystems {
@@ -145,10 +144,8 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			}
 		}
 
-		// Optionally add default avoids here
 		avoidList[30100000] = true // Example: Zarzakh
 
-		// Search path with avoid list
 		s.graphMutex.RLock()
 		pathIDs := FindShortestPath(s.universeGraph, startID, endID, avoidList)
 		s.graphMutex.RUnlock()
@@ -159,7 +156,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
-			// NEW: Loop through the path to get names AND kill data
 			var pathWithKills []string
 			for _, systemID := range pathIDs {
 				systemName := fmt.Sprintf("Unknown (%d)", systemID)
@@ -167,17 +163,15 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					systemName = sysInfo.Name
 				}
 
-				// Fetch kill data and create a threat indicator
 				var threatIndicator string
 				if kills, err := s.esiClient.GetSystemKills(systemID); err == nil && len(kills) > 0 {
 					shipKills := kills[0].ShipKills
 					if shipKills >= 10 {
-						threatIndicator = fmt.Sprintf("🔥 (%d)", shipKills) // High threat
+						threatIndicator = fmt.Sprintf("🔥 (%d)", shipKills)
 					} else if shipKills > 0 {
-						threatIndicator = fmt.Sprintf("⚠️ (%d)", shipKills) // Medium threat
+						threatIndicator = fmt.Sprintf("⚠️ (%d)", shipKills)
 					}
 				}
-
 				pathWithKills = append(pathWithKills, fmt.Sprintf("%s %s", systemName, threatIndicator))
 			}
 
@@ -191,7 +185,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				embedColor = 0xF44336
 			}
 
-			// List excluded system names for embed field
 			excludedSysNames := []string{}
 			for sysID := range avoidList {
 				if sysInfo, err := s.esiClient.GetSystemDetails(sysID); err == nil {
@@ -209,25 +202,10 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Timestamp:   time.Now().Format(time.RFC3339),
 				Description: routeString,
 				Fields: []*discordgo.MessageEmbedField{
-					{
-						Name:   "Start",
-						Value:  startName,
-						Inline: true,
-					},
-					{
-						Name:   "End",
-						Value:  endName,
-						Inline: true,
-					},
-					{
-						Name:   "Jumps",
-						Value:  fmt.Sprintf("%d", jumpCount),
-						Inline: true,
-					},
-					{
-						Name:  "Excluded Systems",
-						Value: strings.Join(excludedSysNames, ", "),
-					},
+					{Name: "Start", Value: startName, Inline: true},
+					{Name: "End", Value: endName, Inline: true},
+					{Name: "Jumps", Value: fmt.Sprintf("%d", jumpCount), Inline: true},
+					{Name: "Excluded Systems", Value: strings.Join(excludedSysNames, ", ")},
 				},
 				Footer: &discordgo.MessageEmbedFooter{
 					Text: "Zarzakh is always avoided. Kill data is for the last hour.",
@@ -244,21 +222,44 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	}
 }
 
-// FindAndConvertPath can now be removed if it's no longer used elsewhere.
-// I'll leave it here for now in case other parts of your code need it.
-func FindAndConvertPath(graph map[int][]int, startID, endID int, esi *ESIClient, avoidList map[int]bool) []string {
-	pathIDs := FindShortestPath(graph, startID, endID, avoidList)
-	if pathIDs == nil {
+// FindShortestPath implements a memory-efficient Breadth-First Search.
+func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int]bool) []int {
+	if avoidList[startID] || avoidList[endID] {
 		return nil
 	}
 
-	var pathNames []string
-	for _, id := range pathIDs {
-		if sysInfo, err := esi.GetSystemDetails(id); err == nil {
-			pathNames = append(pathNames, sysInfo.Name)
-		} else {
-			pathNames = append(pathNames, fmt.Sprintf("Unknown (%d)", id))
+	queue := []int{startID}
+	// visited map now stores the parent of each system to reconstruct the path later
+	visited := make(map[int]int)
+	visited[startID] = -1 // Mark start with a special value
+
+	head := 0
+	for head < len(queue) {
+		currentSystem := queue[head]
+		head++
+
+		if currentSystem == endID {
+			// Reconstruct path by backtracking from the end
+			path := []int{}
+			temp := currentSystem
+			for temp != -1 {
+				path = append(path, temp)
+				temp = visited[temp]
+			}
+			// Reverse the path to get it from start -> end
+			for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
+				path[i], path[j] = path[j], path[i]
+			}
+			return path
+		}
+
+		for _, neighbor := range graph[currentSystem] {
+			if _, found := visited[neighbor]; !found && !avoidList[neighbor] {
+				visited[neighbor] = currentSystem // Record the parent
+				queue = append(queue, neighbor)
+			}
 		}
 	}
-	return pathNames
+
+	return nil // No path found
 }
