@@ -243,8 +243,8 @@ func (s *Fetcher) fetchAndSaveData() {
 					nameA := s.esiClient.GetSystemName(sysA_ID)
 					nameB := s.esiClient.GetSystemName(sysB_ID)
 
-					if nameA == "" || nameB == "" {
-						// Skipping this wormhole (log optionally)
+					if nameA == "" || nameB == "" || nameA == "Unknown" || nameB == "Unknown" {
+						log.Println("Naming empty - skipping")
 						continue
 					}
 
