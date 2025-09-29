@@ -128,7 +128,7 @@ type Fetcher struct {
 	universeGraph     map[int][]int
 	graphMutex        *sync.RWMutex
 	eveScoutClient    *EveScoutClient
-	esiClient         *ESIClient // Add ESIClient here
+	esiClient         *ESIClient
 	baseStargateGraph map[int][]int
 }
 
@@ -167,7 +167,7 @@ func (s *Fetcher) Start(wg *sync.WaitGroup, quit chan os.Signal) {
 
 	s.fetchAndSaveData()
 
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
 	log.Println("✅ [FETCHER] Service is running. Will fetch data every 10 minutes.")
@@ -227,14 +227,9 @@ func (s *Fetcher) fetchAndSaveData() {
 		newGraph[k] = newSlice
 	}
 
-	// 2. Add the new data
 	if tripwireData != nil {
 		log.Println("[FETCHER] Processing and validating Tripwire data...")
 		for _, wh := range tripwireData.Wormholes {
-			// This is the validation check
-			if wh.InitialID == "???" || wh.SecondaryID == "???" {
-				continue // Skip this wormhole
-			}
 
 			sigA, okA := tripwireData.Signatures[wh.InitialID]
 			sigB, okB := tripwireData.Signatures[wh.SecondaryID]
@@ -251,7 +246,7 @@ func (s *Fetcher) fetchAndSaveData() {
 				}
 			}
 		}
-	} // s.esiClient is not available here, pass nil for now
+	}
 	for _, route := range allScoutRoutes {
 		newGraph[route.InSystemID] = append(newGraph[route.InSystemID], route.OutSystemID)
 		newGraph[route.OutSystemID] = append(newGraph[route.OutSystemID], route.InSystemID)

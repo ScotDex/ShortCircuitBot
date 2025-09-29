@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -69,7 +68,7 @@ func NewESIClient(contactInfo string) *ESIClient {
 			Transport: &http.Transport{DisableCompression: false},
 		},
 		baseURL:          "https://esi.evetech.net/latest",
-		userAgent:        fmt.Sprintf("Firehawk Discord Bot (%s)", contactInfo),
+		userAgent:        fmt.Sprintf("ShortCircuit Bot/0.1 (%s)", contactInfo),
 		characterNames:   map[int]string{},
 		corporationNames: map[int]string{},
 		shipNames:        map[int]string{},
@@ -226,20 +225,6 @@ func (c *ESIClient) GetSystemDetails(id int) (*ESISystemInfo, error) {
 	return nil, fmt.Errorf("system ID %d not found", id)
 }
 
-// --- Misc ---
-func (c *ESIClient) GetRandomCorporationLogoURL() string {
-	c.cacheMutex.RLock()
-	defer c.cacheMutex.RUnlock()
-	if len(c.corporationNames) == 0 {
-		return "https://images.evetech.net/corporations/109299958/logo?size=128"
-	}
-	ids := make([]int, 0, len(c.corporationNames))
-	for id := range c.corporationNames {
-		ids = append(ids, id)
-	}
-	return fmt.Sprintf("https://images.evetech.net/corporations/%d/logo?size=128", ids[rand.Intn(len(ids))])
-}
-
 func (c *ESIClient) GetSystemID(name string) (int, error) {
 	// For case-insensitivity, we can use a local cache
 	c.cacheMutex.RLock()
@@ -252,7 +237,6 @@ func (c *ESIClient) GetSystemID(name string) (int, error) {
 	}
 	c.cacheMutex.RUnlock()
 
-	// If not in cache, query ESI
 	var idData ESIIDResponse
 	body, _ := json.Marshal([]string{name})
 	if err := c.makeRequest(http.MethodPost, c.baseURL+"/universe/ids/", bytes.NewBuffer(body), &idData); err != nil {
@@ -262,7 +246,5 @@ func (c *ESIClient) GetSystemID(name string) (int, error) {
 		return 0, fmt.Errorf("system not found: %s", name)
 	}
 
-	// Note: We don't cache the result here because the systemInfoCache is loaded from a file.
-	// A more advanced implementation might add it to the cache.
 	return idData.Systems[0].ID, nil
 }

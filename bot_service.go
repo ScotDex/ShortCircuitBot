@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -38,7 +37,7 @@ func (s *Service) Start(wg *sync.WaitGroup, quit chan os.Signal) {
 	}
 
 	dg.AddHandler(s.ready)
-	dg.AddHandler(s.interactionCreate) // We only need the interaction handler now
+	dg.AddHandler(s.interactionCreate)
 
 	dg.Identify.Intents = discordgo.IntentsGuildMessages
 
@@ -52,12 +51,9 @@ func (s *Service) Start(wg *sync.WaitGroup, quit chan os.Signal) {
 	log.Println("[BOT] Shutdown signal received, exiting.")
 }
 
-// --- Discord Event Handlers ---
-
 func (s *Service) ready(sess *discordgo.Session, event *discordgo.Ready) {
 	log.Printf("[BOT] Logged in as: %v#%v\n", sess.State.User.Username, sess.State.User.Discriminator)
 
-	// Define and register the /route slash command
 	commands := []*discordgo.ApplicationCommand{
 		{
 			Name:        "route",
@@ -74,6 +70,12 @@ func (s *Service) ready(sess *discordgo.Session, event *discordgo.Ready) {
 					Name:        "end",
 					Description: "The destination solar system.",
 					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "exclude",
+					Description: "Comma-separated list of systems to avoid",
+					Required:    false,
 				},
 			},
 		},
@@ -108,6 +110,11 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	startName := optionMap["start"].StringValue()
 	endName := optionMap["end"].StringValue()
 
+	excludeInput := ""
+	if opt, exists := optionMap["exclude"]; exists {
+		excludeInput = opt.StringValue()
+	}
+
 	startID, err1 := s.esiClient.GetSystemID(startName)
 	endID, err2 := s.esiClient.GetSystemID(endName)
 
@@ -116,35 +123,58 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 		embed = &discordgo.MessageEmbed{
 			Title:       "Error: Invalid System Name",
 			Description: "Sorry, I couldn't recognise one of those system names. Please check for typos.",
-			Color:       0xff0000, // Red
+			Color:       0xff0000,
 		}
 	} else {
-
 		avoidList := make(map[int]bool)
-		avoidList[30100000] = true
+
+		// Parse exclude systems and build avoid list
+		if excludeInput != "" {
+			excludeSystems := strings.Split(excludeInput, ",")
+			for _, sysName := range excludeSystems {
+				sysName = strings.TrimSpace(sysName)
+				if sysName == "" {
+					continue
+				}
+				sysID, err := s.esiClient.GetSystemID(sysName)
+				if err != nil {
+					log.Printf("[BOT] Warning: Unable to resolve system name for exclude: %s", sysName)
+					continue
+				}
+				avoidList[sysID] = true
+			}
+		}
+
+		// Optionally add default avoids here
+		avoidList[30100000] = true // Example: Zarzakh
+
+		// Search path with avoid list
 		s.graphMutex.RLock()
-		pathNames := FindAndConvertPath(s.universeGraph, startID, endID, s.esiClient, avoidList) // This line was already correct
+		pathNames := FindAndConvertPath(s.universeGraph, startID, endID, s.esiClient, avoidList)
 		s.graphMutex.RUnlock()
 
 		if pathNames == nil {
 			embed = &discordgo.MessageEmbed{
-
 				Description: fmt.Sprintf("No shortcut possible between **%s** and **%s**.", startName, endName),
-				Color:       0xff0000, // Red
+				Color:       0xff0000,
 			}
-
 		} else {
-			// Format the path with a block quote for better readability
 			routeString := fmt.Sprintf("> %s", strings.Join(pathNames, "\n> → "))
-
-			// Choose a color based on the number of jumps
 			jumpCount := len(pathNames) - 1
-			embedColor := 0x4CAF50 // Green for short routes
+			embedColor := 0x4CAF50
 			if jumpCount > 10 {
-				embedColor = 0xFFC107 // Amber for medium routes
+				embedColor = 0xFFC107
 			}
 			if jumpCount > 20 {
-				embedColor = 0xF44336 // Red for long routes
+				embedColor = 0xF44336
+			}
+
+			// List excluded system names for embed field
+			excludedSysNames := []string{}
+			for sysID := range avoidList {
+				if sysInfo, err := s.esiClient.GetSystemDetails(sysID); err == nil {
+					excludedSysNames = append(excludedSysNames, sysInfo.Name)
+				}
 			}
 
 			embed = &discordgo.MessageEmbed{
@@ -172,9 +202,13 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 						Value:  fmt.Sprintf("%d", jumpCount),
 						Inline: true,
 					},
+					{
+						Name:  "Excluded Systems",
+						Value: strings.Join(excludedSysNames, ", "),
+					},
 				},
 				Footer: &discordgo.MessageEmbedFooter{
-					Text: "Zarzakh is currently avoided.",
+					Text: "Zarzakh is always avoided.",
 				},
 			}
 		}
@@ -187,8 +221,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 		log.Printf("[BOT] ERROR: Failed to send webhook edit: %v", err)
 	}
 }
-
-// --- Helper Functions ---
 
 func FindAndConvertPath(graph map[int][]int, startID, endID int, esi *ESIClient, avoidList map[int]bool) []string {
 	pathIDs := FindShortestPath(graph, startID, endID, avoidList)
@@ -205,21 +237,4 @@ func FindAndConvertPath(graph map[int][]int, startID, endID int, esi *ESIClient,
 		}
 	}
 	return pathNames
-}
-
-func startHealthCheckServer() {
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Short Circuit Bot is running!")
-	})
-
-	log.Printf("Health check server starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("Failed to start health check server: %v", err)
-	}
 }
