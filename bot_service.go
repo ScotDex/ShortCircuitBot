@@ -156,23 +156,54 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
-			var pathWithKills []string
-			for _, systemID := range pathIDs {
-				systemName := fmt.Sprintf("Unknown (%d)", systemID)
-				if sysInfo, err := s.esiClient.GetSystemDetails(systemID); err == nil {
-					systemName = sysInfo.Name
-				}
+			// A struct to hold the combined data for each system
+			type SystemIntel struct {
+				Name            string
+				ThreatIndicator string
+			}
 
-				var threatIndicator string
-				if kills, err := s.esiClient.GetSystemKills(systemID); err == nil && len(kills) > 0 {
-					shipKills := kills[0].ShipKills
+			// A map to store the results, protected by a mutex
+			intelMap := make(map[int]SystemIntel)
+			var intelMutex sync.Mutex
+			var wg sync.WaitGroup
+
+			for _, systemID := range pathIDs {
+				wg.Add(1)
+				go func(id int) {
+					defer wg.Done()
+
+					systemName := fmt.Sprintf("Unknown (%d)", id)
+					if sysInfo, err := s.esiClient.GetSystemDetails(id); err == nil {
+						systemName = sysInfo.Name
+					}
+
+					var threatIndicator string
+					shipKills := 0
+					if kills, err := s.esiClient.GetSystemKills(id); err == nil && len(kills) > 0 {
+						shipKills = kills[0].ShipKills
+					}
+
+					// Always show kill count, but use different emojis
 					if shipKills >= 10 {
 						threatIndicator = fmt.Sprintf("🔥 (%d)", shipKills)
 					} else if shipKills > 0 {
 						threatIndicator = fmt.Sprintf("⚠️ (%d)", shipKills)
+					} else {
+						threatIndicator = fmt.Sprintf("✅ (%d)", shipKills) // Safe
 					}
-				}
-				pathWithKills = append(pathWithKills, fmt.Sprintf("%s %s", systemName, threatIndicator))
+
+					intelMutex.Lock()
+					intelMap[id] = SystemIntel{Name: systemName, ThreatIndicator: threatIndicator}
+					intelMutex.Unlock()
+				}(systemID)
+			}
+			wg.Wait() // Wait for all goroutines to finish
+
+			// Build the final route string from the concurrently fetched data
+			var pathWithKills []string
+			for _, systemID := range pathIDs {
+				intel := intelMap[systemID]
+				pathWithKills = append(pathWithKills, fmt.Sprintf("%s %s", intel.Name, intel.ThreatIndicator))
 			}
 
 			routeString := fmt.Sprintf("> %s", strings.Join(pathWithKills, "\n> → "))
@@ -229,9 +260,8 @@ func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int
 	}
 
 	queue := []int{startID}
-	// visited map now stores the parent of each system to reconstruct the path later
 	visited := make(map[int]int)
-	visited[startID] = -1 // Mark start with a special value
+	visited[startID] = -1
 
 	head := 0
 	for head < len(queue) {
@@ -239,14 +269,12 @@ func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int
 		head++
 
 		if currentSystem == endID {
-			// Reconstruct path by backtracking from the end
 			path := []int{}
 			temp := currentSystem
 			for temp != -1 {
 				path = append(path, temp)
 				temp = visited[temp]
 			}
-			// Reverse the path to get it from start -> end
 			for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
 				path[i], path[j] = path[j], path[i]
 			}
@@ -255,11 +283,10 @@ func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int
 
 		for _, neighbor := range graph[currentSystem] {
 			if _, found := visited[neighbor]; !found && !avoidList[neighbor] {
-				visited[neighbor] = currentSystem // Record the parent
+				visited[neighbor] = currentSystem
 				queue = append(queue, neighbor)
 			}
 		}
 	}
-
-	return nil // No path found
+	return nil
 }
