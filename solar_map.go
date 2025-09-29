@@ -65,7 +65,7 @@ func DeduplicateNeighbors(graph map[int][]int) {
 // In the file with your graph logic
 
 func AddTripwireWormholesToGraph(graph map[int][]int, data *TripwireData, esiClient *ESIClient) {
-	if data == nil || esiClient == nil {
+	if data == nil {
 		return
 	}
 
@@ -77,24 +77,22 @@ func AddTripwireWormholesToGraph(graph map[int][]int, data *TripwireData, esiCli
 		if okA && okB {
 			sysA_ID, _ := strconv.Atoi(sigA.SystemID)
 			sysB_ID, _ := strconv.Atoi(sigB.SystemID)
+
+			// Define the complete guard conditions
 			isSigAValid := sysA_ID != 0 && sigA.SignatureID != nil && *sigA.SignatureID != "???"
 			isSigBValid := sysB_ID != 0 && sigB.SignatureID != nil && *sigB.SignatureID != "???"
 
-			if sysA_ID != 0 && sysB_ID != 0 {
+			// Use the complete guard. The old if block has been removed.
+			if isSigAValid && isSigBValid {
 				graph[sysA_ID] = append(graph[sysA_ID], sysB_ID)
 				graph[sysB_ID] = append(graph[sysB_ID], sysA_ID)
 				addedCount++
 
 				// Proactively look up the names for these systems and cache them.
-				esiClient.GetSystemName(sysA_ID)
-				esiClient.GetSystemName(sysB_ID)
-			}
-
-			if isSigAValid && isSigBValid {
-				// This will now only ever run for fully explored, valid connections
-				graph[sysA_ID] = append(graph[sysA_ID], sysB_ID)
-				graph[sysB_ID] = append(graph[sysB_ID], sysA_ID)
-				addedCount++
+				if esiClient != nil {
+					esiClient.GetSystemName(sysA_ID)
+					esiClient.GetSystemName(sysB_ID)
+				}
 			}
 		}
 	}
