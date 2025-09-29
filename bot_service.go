@@ -150,17 +150,39 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 
 		// Search path with avoid list
 		s.graphMutex.RLock()
-		pathNames := FindAndConvertPath(s.universeGraph, startID, endID, s.esiClient, avoidList)
+		pathIDs := FindShortestPath(s.universeGraph, startID, endID, avoidList)
 		s.graphMutex.RUnlock()
 
-		if pathNames == nil {
+		if pathIDs == nil {
 			embed = &discordgo.MessageEmbed{
-				Description: fmt.Sprintf("No shortcut possible between **%s** and **%s**.", startName, endName),
+				Description: fmt.Sprintf("No route possible between **%s** and **%s**.", startName, endName),
 				Color:       0xff0000,
 			}
 		} else {
-			routeString := fmt.Sprintf("> %s", strings.Join(pathNames, "\n> → "))
-			jumpCount := len(pathNames) - 1
+			// NEW: Loop through the path to get names AND kill data
+			var pathWithKills []string
+			for _, systemID := range pathIDs {
+				systemName := fmt.Sprintf("Unknown (%d)", systemID)
+				if sysInfo, err := s.esiClient.GetSystemDetails(systemID); err == nil {
+					systemName = sysInfo.Name
+				}
+
+				// Fetch kill data and create a threat indicator
+				var threatIndicator string
+				if kills, err := s.esiClient.GetSystemKills(systemID); err == nil && len(kills) > 0 {
+					shipKills := kills[0].ShipKills
+					if shipKills >= 10 {
+						threatIndicator = fmt.Sprintf("🔥 (%d)", shipKills) // High threat
+					} else if shipKills > 0 {
+						threatIndicator = fmt.Sprintf("⚠️ (%d)", shipKills) // Medium threat
+					}
+				}
+
+				pathWithKills = append(pathWithKills, fmt.Sprintf("%s %s", systemName, threatIndicator))
+			}
+
+			routeString := fmt.Sprintf("> %s", strings.Join(pathWithKills, "\n> → "))
+			jumpCount := len(pathIDs) - 1
 			embedColor := 0x4CAF50
 			if jumpCount > 10 {
 				embedColor = 0xFFC107
@@ -208,7 +230,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					},
 				},
 				Footer: &discordgo.MessageEmbedFooter{
-					Text: "Zarzakh is always avoided.",
+					Text: "Zarzakh is always avoided. Kill data is for the last hour.",
 				},
 			}
 		}
@@ -222,6 +244,8 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	}
 }
 
+// FindAndConvertPath can now be removed if it's no longer used elsewhere.
+// I'll leave it here for now in case other parts of your code need it.
 func FindAndConvertPath(graph map[int][]int, startID, endID int, esi *ESIClient, avoidList map[int]bool) []string {
 	pathIDs := FindShortestPath(graph, startID, endID, avoidList)
 	if pathIDs == nil {
