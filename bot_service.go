@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -59,24 +60,9 @@ func (s *Service) ready(sess *discordgo.Session, event *discordgo.Ready) {
 			Name:        "route",
 			Description: "Calculates the shortest route between two solar systems.",
 			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "start",
-					Description: "The starting solar system.",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "end",
-					Description: "The destination solar system.",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "exclude",
-					Description: "Comma-separated list of systems to avoid",
-					Required:    false,
-				},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "start", Description: "The starting solar system.", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "end", Description: "The destination solar system.", Required: true},
+				{Type: discordgo.ApplicationCommandOptionString, Name: "exclude", Description: "Comma-separated list of systems to avoid", Required: false},
 			},
 		},
 	}
@@ -109,7 +95,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 
 	startName := optionMap["start"].StringValue()
 	endName := optionMap["end"].StringValue()
-
 	excludeInput := ""
 	if opt, exists := optionMap["exclude"]; exists {
 		excludeInput = opt.StringValue()
@@ -127,7 +112,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 		}
 	} else {
 		avoidList := make(map[int]bool)
-
 		if excludeInput != "" {
 			excludeSystems := strings.Split(excludeInput, ",")
 			for _, sysName := range excludeSystems {
@@ -135,16 +119,14 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				if sysName == "" {
 					continue
 				}
-				sysID, err := s.esiClient.GetSystemID(sysName)
-				if err != nil {
+				if sysID, err := s.esiClient.GetSystemID(sysName); err == nil {
+					avoidList[sysID] = true
+				} else {
 					log.Printf("[BOT] Warning: Unable to resolve system name for exclude: %s", sysName)
-					continue
 				}
-				avoidList[sysID] = true
 			}
 		}
-
-		avoidList[30100000] = true // Example: Zarzakh
+		avoidList[30100000] = true // Zarzakh
 
 		s.graphMutex.RLock()
 		pathIDs := FindShortestPath(s.universeGraph, startID, endID, avoidList)
@@ -156,13 +138,27 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
-			// A struct to hold the combined data for each system
+			// --- 1. Load kill data from the local JSON file ---
+			killMap := make(map[int]int)
+			killFile, err := os.ReadFile("system_kills.json")
+			if err != nil {
+				log.Printf("[BOT] WARN: Could not read local kill data file: %v", err)
+			} else {
+				var allKills []EsiSystemKills
+				if err := json.Unmarshal(killFile, &allKills); err != nil {
+					log.Printf("[BOT] ERROR: Failed to parse local kill data: %v", err)
+				} else {
+					for _, k := range allKills {
+						killMap[k.SystemID] = k.ShipKills
+					}
+				}
+			}
+
+			// --- 2. Fetch system names concurrently using the local kill data ---
 			type SystemIntel struct {
 				Name            string
 				ThreatIndicator string
 			}
-
-			// A map to store the results, protected by a mutex
 			intelMap := make(map[int]SystemIntel)
 			var intelMutex sync.Mutex
 			var wg sync.WaitGroup
@@ -177,19 +173,18 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 						systemName = sysInfo.Name
 					}
 
-					var threatIndicator string
 					shipKills := 0
-					if kills, err := s.esiClient.GetSystemKills(id); err == nil && len(kills) > 0 {
-						shipKills = kills[0].ShipKills
+					if kills, ok := killMap[id]; ok {
+						shipKills = kills
 					}
 
-					// Always show kill count, but use different emojis
+					var threatIndicator string
 					if shipKills >= 10 {
 						threatIndicator = fmt.Sprintf("🔥 (%d)", shipKills)
 					} else if shipKills > 0 {
 						threatIndicator = fmt.Sprintf("⚠️ (%d)", shipKills)
 					} else {
-						threatIndicator = fmt.Sprintf("✅ (%d)", shipKills) // Safe
+						threatIndicator = fmt.Sprintf("✅ (%d)", shipKills)
 					}
 
 					intelMutex.Lock()
@@ -197,9 +192,9 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					intelMutex.Unlock()
 				}(systemID)
 			}
-			wg.Wait() // Wait for all goroutines to finish
+			wg.Wait()
 
-			// Build the final route string from the concurrently fetched data
+			// --- 3. Build the final response ---
 			var pathWithKills []string
 			for _, systemID := range pathIDs {
 				intel := intelMap[systemID]
@@ -216,7 +211,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				embedColor = 0xF44336
 			}
 
-			excludedSysNames := []string{}
+			var excludedSysNames []string
 			for sysID := range avoidList {
 				if sysInfo, err := s.esiClient.GetSystemDetails(sysID); err == nil {
 					excludedSysNames = append(excludedSysNames, sysInfo.Name)
@@ -224,10 +219,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			}
 
 			embed = &discordgo.MessageEmbed{
-				Author: &discordgo.MessageEmbedAuthor{
-					Name:    "ShortCircuit Route Planner",
-					IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64",
-				},
+				Author:      &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"},
 				Title:       "Route Calculated",
 				Color:       embedColor,
 				Timestamp:   time.Now().Format(time.RFC3339),
@@ -238,9 +230,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					{Name: "Jumps", Value: fmt.Sprintf("%d", jumpCount), Inline: true},
 					{Name: "Excluded Systems", Value: strings.Join(excludedSysNames, ", ")},
 				},
-				Footer: &discordgo.MessageEmbedFooter{
-					Text: "Zarzakh is always avoided. Kill data is for the last hour.",
-				},
+				Footer: &discordgo.MessageEmbedFooter{Text: "Zarzakh is always avoided. Kill data is for the last hour."},
 			}
 		}
 	}
@@ -253,12 +243,10 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	}
 }
 
-// FindShortestPath implements a memory-efficient Breadth-First Search.
 func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int]bool) []int {
 	if avoidList[startID] || avoidList[endID] {
 		return nil
 	}
-
 	queue := []int{startID}
 	visited := make(map[int]int)
 	visited[startID] = -1
@@ -267,7 +255,6 @@ func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int
 	for head < len(queue) {
 		currentSystem := queue[head]
 		head++
-
 		if currentSystem == endID {
 			path := []int{}
 			temp := currentSystem
@@ -280,7 +267,6 @@ func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int
 			}
 			return path
 		}
-
 		for _, neighbor := range graph[currentSystem] {
 			if _, found := visited[neighbor]; !found && !avoidList[neighbor] {
 				visited[neighbor] = currentSystem

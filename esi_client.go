@@ -253,19 +253,20 @@ func (c *ESIClient) GetSystemID(name string) (int, error) {
 
 // EsiSystemKills defines the structure for the system kills endpoint
 type EsiSystemKills struct {
-	SystemID  int `json:"system_id"`
-	ShipKills int `json:"ship_kills"`
-	PodKills  int `json:"pod_kills"`
 	NpcKills  int `json:"npc_kills"`
+	PodKills  int `json:"pod_kills"`
+	ShipKills int `json:"ship_kills"`
+	SystemID  int `json:"system_id"`
 }
 
 // GetSystemKills fetches recent kill data for a given solar system.
-func (c *ESIClient) GetSystemKills(systemID int) ([]EsiSystemKills, error) {
+func (c *ESIClient) GetSystemKills() ([]EsiSystemKills, error) {
 	// Note: ESI returns a list, but for this endpoint, it's a list with one item.
 	var kills []EsiSystemKills
 
-	// Use a cached request to avoid hitting ESI rate limits
-	err := c.makeRequest(http.MethodGet, fmt.Sprintf("%s/universe/system_kills/", c.baseURL), nil, &kills)
+	// In GetSystemKills...
+	url := fmt.Sprintf("%s/universe/system_kills?system_id=%d", c.baseURL)
+	err := c.makeRequest(http.MethodGet, url, nil, &kills)
 	if err != nil {
 		return nil, err
 	}

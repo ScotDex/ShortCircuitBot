@@ -74,11 +74,13 @@ func main() {
 	var servicesWg sync.WaitGroup
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-
+	killUpdater := NewKillDataUpdater(esiClient, "system_kills.json")
 	servicesWg.Add(2)
 	go fetcherService.Start(&servicesWg, quit)
 	go botService.Start(&servicesWg, quit)
 	go startHealthCheckServer()
+
+	go killUpdater.Start() // Run it in the background
 
 	servicesWg.Wait()
 	log.Println("--- All services have shut down. Exiting. ---")
