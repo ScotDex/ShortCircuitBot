@@ -239,14 +239,22 @@ func (s *Fetcher) fetchAndSaveData() {
 				sysB_ID, _ := strconv.Atoi(sigB.SystemID)
 
 				if sysA_ID != 0 && sysB_ID != 0 {
+
+					nameA := s.esiClient.GetSystemName(sysA_ID)
+					nameB := s.esiClient.GetSystemName(sysB_ID)
+
+					if nameA == "" || nameB == "" {
+						// Skipping this wormhole (log optionally)
+						continue
+					}
+
 					newGraph[sysA_ID] = append(newGraph[sysA_ID], sysB_ID)
 					newGraph[sysB_ID] = append(newGraph[sysB_ID], sysA_ID)
-					s.esiClient.GetSystemName(sysA_ID)
-					s.esiClient.GetSystemName(sysB_ID)
 				}
 			}
 		}
 	}
+
 	for _, route := range allScoutRoutes {
 		newGraph[route.InSystemID] = append(newGraph[route.InSystemID], route.OutSystemID)
 		newGraph[route.OutSystemID] = append(newGraph[route.OutSystemID], route.InSystemID)
