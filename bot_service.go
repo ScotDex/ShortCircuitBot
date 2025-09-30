@@ -28,7 +28,7 @@ func NewService(token string, graph map[int][]int, mutex *sync.RWMutex, esi *ESI
 	}
 }
 
-func (s *Service) Start(wg *sync.WaitGroup, quit chan os.Signal) {
+func (s *Service) Start(wg *sync.WaitGroup, quit chan struct{}) {
 	defer wg.Done()
 	log.Println("[BOT] Starting service...")
 

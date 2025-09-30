@@ -1,4 +1,3 @@
-// You can place this in a new file like 'updater.go'
 package main
 
 import (
