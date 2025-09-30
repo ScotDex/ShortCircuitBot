@@ -56,8 +56,8 @@ func (u *KillDataUpdater) Stop() {
 // fetchAndSave gets the data from ESI and writes it to the local file.
 func (u *KillDataUpdater) fetchAndSave() {
 	log.Println("[UPDATER] Fetching latest system kill data from ESI...")
-	// Assumes GetSystemKills fetches data for ALL systems.
-	kills, err := u.esiClient.GetSystemKills()
+	// GetSystemKills is expected to fetch data for all systems, so no specific systemID is passed.
+	kills, err := u.esiClient.GetSystemKills() // Pass 0 or a dummy value if the ESI endpoint doesn't require a specific system ID for all kills.
 	if err != nil {
 		log.Printf("[UPDATER] ERROR: Failed to fetch kills from ESI: %v", err)
 		return
