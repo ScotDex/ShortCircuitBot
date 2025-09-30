@@ -230,7 +230,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			wg.Wait()
 
 			var routeLines []string
-			header := fmt.Sprintf("%-14s | %-4s | %-10s | %-10s | %s", "System", "Sec", "SigID", "Info", "System Kills")
+			header := fmt.Sprintf("%-14s | %-4s | %-10s | %-10s | %s", "System", "Sec", "SigID", "Info", "Kills")
 			routeLines = append(routeLines, header)
 			routeLines = append(routeLines, strings.Repeat("-", len(header)+2))
 
