@@ -35,6 +35,6 @@ COPY mapSolarSystemJumps.csv .
 COPY system_cache.json .
 COPY tripwire_data.json .
 COPY system_kills.json .
-
+COPY logo.png .
 # Set the command that will be executed when the container starts.
 ENTRYPOINT ["/shortcircuit-bot"]

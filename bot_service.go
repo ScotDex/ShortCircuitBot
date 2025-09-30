@@ -217,7 +217,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			}
 
 			embed = &discordgo.MessageEmbed{
-				Author:      &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"},
+				Author:      &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "logo.png"},
 				Title:       "Route Calculated",
 				Color:       embedColor,
 				Timestamp:   time.Now().Format(time.RFC3339),
