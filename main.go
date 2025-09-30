@@ -25,7 +25,13 @@ func main() {
 	esiClient := NewESIClient("YourApp/ContactEmail")
 	eveScoutClient := NewEveScoutClient("ShortCircuitBot/0.1")
 
-	// --- 1. Build the complete initial graph from all sources ---
+	// --- 1. Load ESI System Cache ---
+	// This must be done first so the ESI client knows system names.
+	if err := esiClient.LoadSystemCache("system_cache.json"); err != nil {
+		log.Printf("%s Could not load system cache: %v. Names will be fetched live.", logWarn, err)
+	}
+
+	// --- 2. Build the complete initial graph from all sources ---
 	log.Println("--- Building initial universe graph ---")
 	universeGraph, err := BuildGraphFromCSV("mapSolarSystemJumps.csv")
 	if err != nil {
@@ -60,7 +66,7 @@ func main() {
 	DeduplicateNeighbors(universeGraph)
 	log.Printf("%s Graph built with %d systems.", logSuccess, len(universeGraph))
 
-	// --- 2. Create services with the fully-built graph ---
+	// --- 3. Create services with the fully-built graph ---
 	var graphMutex sync.RWMutex
 	fetcherService, err := New(cfg.TripwireURL, cfg.TripwireUser, cfg.TripwirePass, universeGraph, &graphMutex)
 	if err != nil {
@@ -70,7 +76,7 @@ func main() {
 	killUpdater := NewKillDataUpdater(esiClient, "system_kills.json")
 	theraUpdater := NewTheraUpdater(eveScoutClient, universeGraph, &graphMutex)
 
-	// --- 3. Start services and handle shutdown ---
+	// --- 4. Start services and handle shutdown ---
 	var servicesWg sync.WaitGroup
 	quit := make(chan struct{})
 
