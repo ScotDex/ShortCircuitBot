@@ -165,14 +165,22 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			}
 
 			sigMap := make(map[int]string)
+			eolMap := make(map[int]time.Time)
 			tripwireFile, err := os.ReadFile("tripwire_data.json")
 			if err == nil {
 				var tripwireData TripwireData
 				if json.Unmarshal(tripwireFile, &tripwireData) == nil {
 					for _, sig := range tripwireData.Signatures {
 						sysID, _ := strconv.Atoi(sig.SystemID)
-						if sysID != 0 && sig.SignatureID != nil {
-							sigMap[sysID] = *sig.SignatureID
+						if sysID != 0 {
+							if sig.SignatureID != nil {
+								sigMap[sysID] = *sig.SignatureID
+							}
+							if sig.LifeLeft != "" { // Changed from `!= nil` to `!= ""`
+								if eolTime, err := time.Parse("2006-01-02 15:04:05", sig.LifeLeft); err == nil {
+									eolMap[sysID] = eolTime
+								}
+							}
 						}
 					}
 				}
@@ -183,6 +191,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				KillCount   int
 				SecDisplay  string
 				SignatureID string
+				EolInfo     string
 			}
 			intelMap := make(map[int]SystemIntel)
 			var intelMutex sync.Mutex
@@ -204,6 +213,14 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					if sigID, ok := sigMap[id]; ok {
 						intel.SignatureID = sigID
 					}
+					if eolTime, ok := eolMap[id]; ok {
+						remaining := time.Until(eolTime)
+						if remaining > 0 {
+							intel.EolInfo = fmt.Sprintf("EOL: ~%dh", int(remaining.Hours()))
+						} else {
+							intel.EolInfo = "EOL"
+						}
+					}
 
 					intelMutex.Lock()
 					intelMap[id] = intel
@@ -213,7 +230,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			wg.Wait()
 
 			var routeLines []string
-			header := fmt.Sprintf("%-14s | %-4s | %-10s | %s", "System", "Sec", "SigID", "System Kills")
+			header := fmt.Sprintf("%-14s | %-4s | %-10s | %-10s | %s", "System", "Sec", "SigID", "Info", "System Kills")
 			routeLines = append(routeLines, header)
 			routeLines = append(routeLines, strings.Repeat("-", len(header)+2))
 
@@ -224,8 +241,8 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					arrow = "  "
 				}
 
-				line := fmt.Sprintf("%s%-12s | %-4s | %-10s | 🔥 %d",
-					arrow, intel.Name, intel.SecDisplay, intel.SignatureID, intel.KillCount)
+				line := fmt.Sprintf("%s%-12s | %-4s | %-10s | %-10s | 🔥 %d",
+					arrow, intel.Name, intel.SecDisplay, intel.SignatureID, intel.EolInfo, intel.KillCount)
 				routeLines = append(routeLines, line)
 			}
 			routeString := "```\n" + strings.Join(routeLines, "\n") + "\n```"
@@ -292,6 +309,7 @@ func FindPreferredPath(graph map[int][]int, startID, endID int, esiClient *ESICl
 		if currentIndex == -1 {
 			break
 		}
+
 		pq = append(pq[:currentIndex], pq[currentIndex+1:]...)
 
 		if currentID == endID {
