@@ -166,7 +166,6 @@ func (s *Fetcher) Start(wg *sync.WaitGroup, quit chan struct{}) {
 	}
 }
 
-// updateTripwireData now only fetches and processes Tripwire connections.
 func (s *Fetcher) updateTripwireData() {
 	log.Println("[FETCHER] Fetching Tripwire data...")
 	tripwireData, err := s.scraper.FetchData()
@@ -177,9 +176,6 @@ func (s *Fetcher) updateTripwireData() {
 
 	log.Println("[FETCHER] ✅ Tripwire data fetched successfully.")
 
-	// --- EFFICIENT GRAPH UPDATE ---
-	// NOTE: This logic assumes you are clearing out old Tripwire/Thera connections
-	// before adding new ones. Rebuilding from the baseStargateGraph is one way to do that.
 	newGraph := make(map[int][]int, len(s.baseStargateGraph))
 	for k, v := range s.baseStargateGraph {
 		newSlice := make([]int, len(v))

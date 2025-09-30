@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,22 +69,13 @@ func (s *Service) ready(sess *discordgo.Session, event *discordgo.Ready) {
 					Description: "The type of route to prefer.",
 					Required:    false,
 					Choices: []*discordgo.ApplicationCommandOptionChoice{
-						{
-							Name:  "Safest (High-Sec first)",
-							Value: "safer",
-						},
-						{
-							Name:  "Unsafe (Low/Null-Sec first)",
-							Value: "unsafe",
-						},
-						{
-							Name:  "Shortest (Default)",
-							Value: "shortest",
-						},
+						{Name: "Safest (High-Sec first)", Value: "safer"},
+						{Name: "Unsafe (Low/Null-Sec first)", Value: "unsafe"},
+						{Name: "Shortest (Default)", Value: "shortest"},
 					},
 				},
-			}, // <-- Missing brace for the Options slice
-		}, // <-- Missing brace for the ApplicationCommand struct
+			},
+		},
 	}
 
 	_, err := sess.ApplicationCommandBulkOverwrite(sess.State.User.ID, "", commands)
@@ -118,17 +110,13 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	if opt, exists := optionMap["exclude"]; exists {
 		excludeInput = opt.StringValue()
 	}
-
-	startID, err1 := s.esiClient.GetSystemID(startName)
-	endID, err2 := s.esiClient.GetSystemID(endName)
-
-	// --- ADD THIS BLOCK HERE ---
-	// Get the user's preference, defaulting to "shortest" if not provided.
 	preference := "shortest"
 	if opt, exists := optionMap["preference"]; exists {
 		preference = opt.StringValue()
 	}
-	// --- END OF NEW BLOCK ---
+
+	startID, err1 := s.esiClient.GetSystemID(startName)
+	endID, err2 := s.esiClient.GetSystemID(endName)
 
 	var embed *discordgo.MessageEmbed
 	var embedAuthor = &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"}
@@ -155,7 +143,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 		avoidList[30100000] = true // Zarzakh
 
 		s.graphMutex.RLock()
-		pathIDs := FindShortestPath(s.universeGraph, startID, endID, s.esiClient, avoidList, preference)
+		pathIDs := FindPreferredPath(s.universeGraph, startID, endID, s.esiClient, preference, avoidList)
 		s.graphMutex.RUnlock()
 
 		if pathIDs == nil {
@@ -176,11 +164,25 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
+			sigMap := make(map[int]string)
+			tripwireFile, err := os.ReadFile("tripwire_data.json")
+			if err == nil {
+				var tripwireData TripwireData
+				if json.Unmarshal(tripwireFile, &tripwireData) == nil {
+					for _, sig := range tripwireData.Signatures {
+						sysID, _ := strconv.Atoi(sig.SystemID)
+						if sysID != 0 && sig.SignatureID != nil {
+							sigMap[sysID] = *sig.SignatureID
+						}
+					}
+				}
+			}
+
 			type SystemIntel struct {
-				Name       string
-				KillCount  int
-				SecStatus  float64
-				SecDisplay string
+				Name        string
+				KillCount   int
+				SecDisplay  string
+				SignatureID string
 			}
 			intelMap := make(map[int]SystemIntel)
 			var intelMutex sync.Mutex
@@ -194,11 +196,13 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					intel := SystemIntel{Name: fmt.Sprintf("Unknown (%d)", id), SecDisplay: "N/A"}
 					if sysInfo, err := s.esiClient.GetSystemDetails(id); err == nil {
 						intel.Name = sysInfo.Name
-						intel.SecStatus = sysInfo.SecurityStatus
 						intel.SecDisplay = fmt.Sprintf("%.1f", sysInfo.SecurityStatus)
 					}
 					if kills, ok := killMap[id]; ok {
 						intel.KillCount = kills
+					}
+					if sigID, ok := sigMap[id]; ok {
+						intel.SignatureID = sigID
 					}
 
 					intelMutex.Lock()
@@ -209,7 +213,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			wg.Wait()
 
 			var routeLines []string
-			header := fmt.Sprintf("%-14s | %-4s | %s", "System", "Sec", "Kills (1hr)")
+			header := fmt.Sprintf("%-14s | %-4s | %-10s | %s", "System", "Sec", "Signature", "Kills (1hr)")
 			routeLines = append(routeLines, header)
 			routeLines = append(routeLines, strings.Repeat("-", len(header)+2))
 
@@ -220,7 +224,8 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					arrow = "  "
 				}
 
-				line := fmt.Sprintf("%s%-12s | %-4s | 🔥 %d", arrow, intel.Name, intel.SecDisplay, intel.KillCount)
+				line := fmt.Sprintf("%s%-12s | %-4s | %-10s | 🔥 %d",
+					arrow, intel.Name, intel.SecDisplay, intel.SignatureID, intel.KillCount)
 				routeLines = append(routeLines, line)
 			}
 			routeString := "```\n" + strings.Join(routeLines, "\n") + "\n```"
@@ -266,46 +271,34 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	}
 }
 
-// This function replaces your old FindShortestPath
-func FindShortestPath(graph map[int][]int, startID, endID int, esiClient *ESIClient, avoidList map[int]bool, preference string) []int {
-	// A map to store the cost to reach each system from the start
+func FindPreferredPath(graph map[int][]int, startID, endID int, esiClient *ESIClient, preference string, avoidList map[int]bool) []int {
 	costs := make(map[int]float64)
 	for id := range graph {
-		costs[id] = 1e9 // Initialize all costs to infinity
+		costs[id] = 1e9
 	}
 	costs[startID] = 0
-
-	// A map to reconstruct the path
 	parents := make(map[int]int)
-
-	// A simple priority queue to hold systems to visit
 	pq := []int{startID}
 
 	for len(pq) > 0 {
-		// Find the node in the queue with the lowest cost
 		var currentID int
 		var lowestCost = 1e10
 		var currentIndex = -1
 		for i, id := range pq {
 			if costs[id] < lowestCost {
-				lowestCost = costs[id]
-				currentID = id
-				currentIndex = i
+				lowestCost, currentID, currentIndex = costs[id], id, i
 			}
 		}
 		if currentIndex == -1 {
 			break
 		}
-
-		// Remove from queue
 		pq = append(pq[:currentIndex], pq[currentIndex+1:]...)
 
 		if currentID == endID {
-			// Path found, reconstruct it from the parents map...
 			path := []int{}
 			for at := endID; at != 0; at = parents[at] {
 				path = append([]int{at}, path...)
-				if at == startID { // Stop if we've reached the start
+				if at == startID {
 					break
 				}
 			}
@@ -313,30 +306,28 @@ func FindShortestPath(graph map[int][]int, startID, endID int, esiClient *ESICli
 		}
 
 		for _, neighborID := range graph[currentID] {
-			// --- THIS IS THE KEY LOGIC ---
-			cost := 1.0 // Default cost for one jump
+			if avoidList[neighborID] {
+				continue
+			}
 
-			if preference == "safer" {
-				sysInfo, _ := esiClient.GetSystemDetails(neighborID)
-				if sysInfo != nil && sysInfo.SecurityStatus < 0.5 {
-					cost += 100.0 // Add a huge penalty for non-high-sec systems
-				}
-			} else if preference == "unsafe" {
-				sysInfo, _ := esiClient.GetSystemDetails(neighborID)
-				if sysInfo != nil && sysInfo.SecurityStatus >= 0.5 {
-					cost += 100.0 // Add a huge penalty for high-sec systems
+			cost := 1.0
+			if preference != "shortest" {
+				if sysInfo, err := esiClient.GetSystemDetails(neighborID); err == nil {
+					isHighSec := sysInfo.SecurityStatus >= 0.5
+					if preference == "safer" && !isHighSec {
+						cost += 100.0
+					} else if preference == "unsafe" && isHighSec {
+						cost += 100.0
+					}
 				}
 			}
 
 			newCost := costs[currentID] + cost
 			if newCost < costs[neighborID] {
-				costs[neighborID] = newCost
-				parents[neighborID] = currentID
+				costs[neighborID], parents[neighborID] = newCost, currentID
 				pq = append(pq, neighborID)
 			}
 		}
 	}
-	return nil // No path found
+	return nil
 }
-
-// formatSecurity is no longer needed as we are using the raw value for alignment.

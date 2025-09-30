@@ -261,15 +261,6 @@ type EsiSystemKills struct {
 
 // GetSystemKills fetches recent kill data for a given solar system.
 func (c *ESIClient) GetSystemKills() ([]EsiSystemKills, error) {
-	// Note: ESI returns a list, but for this endpoint, it's a list with one item.
 	var kills []EsiSystemKills
-
-	// In GetSystemKills...
-	url := fmt.Sprintf("%s/universe/system_kills?system_id=%d", c.baseURL)
-	err := c.makeRequest(http.MethodGet, url, nil, &kills)
-	if err != nil {
-		return nil, err
-	}
-
 	return kills, nil
 }
