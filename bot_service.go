@@ -174,7 +174,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 						sysID, _ := strconv.Atoi(sig.SystemID)
 						if sysID != 0 {
 							if sig.SignatureID != nil {
-								sigMap[sysID] = *sig.SignatureID
+								sigMap[sysID] = strings.ToUpper(*sig.SignatureID)
 							}
 							if sig.LifeLeft != "" { // Changed from `!= nil` to `!= ""`
 								if eolTime, err := time.Parse("2006-01-02 15:04:05", sig.LifeLeft); err == nil {
