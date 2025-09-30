@@ -119,7 +119,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	endID, err2 := s.esiClient.GetSystemID(endName)
 
 	var embed *discordgo.MessageEmbed
-	var embedAuthor = &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"}
+	var embedAuthor = &discordgo.MessageEmbedAuthor{Name: "Short Circuit Bot", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"}
 
 	if err1 != nil || err2 != nil {
 		embed = &discordgo.MessageEmbed{
@@ -213,7 +213,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			wg.Wait()
 
 			var routeLines []string
-			header := fmt.Sprintf("%-14s | %-4s | %-10s | %s", "System", "Sec", "Signature", "Kills (1hr)")
+			header := fmt.Sprintf("%-14s | %-4s | %-10s | %s", "System", "Sec", "SigID", "System Kills")
 			routeLines = append(routeLines, header)
 			routeLines = append(routeLines, strings.Repeat("-", len(header)+2))
 
@@ -258,7 +258,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					{Name: "Jumps", Value: fmt.Sprintf("%d", jumpCount), Inline: true},
 					{Name: "Excluded Systems", Value: strings.Join(excludedSysNames, ", ")},
 				},
-				Footer: &discordgo.MessageEmbedFooter{Text: "Zarzakh is ALWAYS excluded. This is a test Bot."},
+				Footer: &discordgo.MessageEmbedFooter{Text: "Zarzakh is ALWAYS excluded. Kills are up to 60min Old."},
 			}
 		}
 	}

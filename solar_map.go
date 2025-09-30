@@ -135,14 +135,9 @@ func loadTripwireData(filename string) (*TripwireData, error) {
 		}
 		return nil, err
 	}
-
-	// --- THIS IS THE FIX ---
-	// If the file is empty, also treat it as a "no data" scenario.
 	if len(file) == 0 {
 		return nil, nil
 	}
-
-	// If the file has content, try to parse it as before.
 	var data TripwireData
 	if err := json.Unmarshal(file, &data); err != nil {
 		return nil, err
