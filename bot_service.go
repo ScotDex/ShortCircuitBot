@@ -106,6 +106,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	var embed *discordgo.MessageEmbed
 	if err1 != nil || err2 != nil {
 		embed = &discordgo.MessageEmbed{
+			Author:      &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"},
 			Title:       "Error: Invalid System Name",
 			Description: "Sorry, I couldn't recognise one of those system names. Please check for typos.",
 			Color:       0xff0000,
@@ -134,11 +135,11 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 
 		if pathIDs == nil {
 			embed = &discordgo.MessageEmbed{
+				Author:      &discordgo.MessageEmbedAuthor{Name: "ShortCircuit Route Planner", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"},
 				Description: fmt.Sprintf("No route possible between **%s** and **%s**.", startName, endName),
 				Color:       0xff0000,
 			}
 		} else {
-			// --- 1. Load kill data from the local file ---
 			killMap := make(map[int]int)
 			killFile, err := os.ReadFile("system_kills.json")
 			if err != nil {
@@ -152,23 +153,27 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
-			// --- 2. Concurrently fetch system names and combine with local kill data ---
 			type SystemIntel struct {
 				Name            string
 				ThreatIndicator string
+				SecurityStatus  string // Added for security status
 			}
 			intelMap := make(map[int]SystemIntel)
 			var intelMutex sync.Mutex
-			var wg sync.WaitGroup // The WaitGroup to fix the race condition
+			var wg sync.WaitGroup
 
 			for _, systemID := range pathIDs {
 				wg.Add(1)
 				go func(id int) {
 					defer wg.Done()
 
-					systemName := fmt.Sprintf("Unknown (%d)", id)
+					var systemName, securityStatus string
 					if sysInfo, err := s.esiClient.GetSystemDetails(id); err == nil {
 						systemName = sysInfo.Name
+						securityStatus = formatSecurity(sysInfo.SecurityStatus)
+					} else {
+						systemName = fmt.Sprintf("Unknown (%d)", id)
+						securityStatus = "N/A"
 					}
 
 					shipKills := 0
@@ -178,28 +183,31 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 
 					var threatIndicator string
 					if shipKills >= 10 {
-						threatIndicator = fmt.Sprintf("🔥 (%d)", shipKills)
+						threatIndicator = fmt.Sprintf("System Kills in the last 60min 🔥 (%d)", shipKills)
 					} else if shipKills > 0 {
-						threatIndicator = fmt.Sprintf("⚠️ (%d)", shipKills)
+						threatIndicator = fmt.Sprintf("System Kills in the last 60min ⚠️ (%d)", shipKills)
 					} else {
-						threatIndicator = fmt.Sprintf("✅ (%d)", shipKills)
+						threatIndicator = fmt.Sprintf("System Kills in the last 60min ✅ (%d)", shipKills)
 					}
 
 					intelMutex.Lock()
-					intelMap[id] = SystemIntel{Name: systemName, ThreatIndicator: threatIndicator}
+					intelMap[id] = SystemIntel{
+						Name:            systemName,
+						ThreatIndicator: threatIndicator,
+						SecurityStatus:  securityStatus,
+					}
 					intelMutex.Unlock()
 				}(systemID)
 			}
-			wg.Wait() // Wait for all goroutines to finish before proceeding
+			wg.Wait()
 
-			// --- 3. Build the final response ---
-			var pathWithKills []string
+			var pathWithData []string
 			for _, systemID := range pathIDs {
 				intel := intelMap[systemID]
-				pathWithKills = append(pathWithKills, fmt.Sprintf("%s %s", intel.Name, intel.ThreatIndicator))
+				pathWithData = append(pathWithData, fmt.Sprintf("%s %s %s", intel.Name, intel.SecurityStatus, intel.ThreatIndicator))
 			}
 
-			routeString := fmt.Sprintf("> %s", strings.Join(pathWithKills, "\n> → "))
+			routeString := fmt.Sprintf("> %s", strings.Join(pathWithData, "\n> → "))
 			jumpCount := len(pathIDs) - 1
 			embedColor := 0x4CAF50
 			if jumpCount > 10 {
@@ -228,7 +236,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					{Name: "Jumps", Value: fmt.Sprintf("%d", jumpCount), Inline: true},
 					{Name: "Excluded Systems", Value: strings.Join(excludedSysNames, ", ")},
 				},
-				Footer: &discordgo.MessageEmbedFooter{Text: "Zarzakh is always avoided. Kill data is for the last hour."},
+				Footer: &discordgo.MessageEmbedFooter{Text: "Zarzakh is ALWAYS excluded. This is a test Bot."},
 			}
 		}
 	}
@@ -273,4 +281,15 @@ func FindShortestPath(graph map[int][]int, startID, endID int, avoidList map[int
 		}
 	}
 	return nil
+}
+
+func formatSecurity(sec float64) string {
+	roundedSec := fmt.Sprintf("%.1f", sec)
+	if sec >= 0.5 {
+		return fmt.Sprintf("🟩 %s", roundedSec)
+	}
+	if sec > 0.0 {
+		return fmt.Sprintf("🟧 %s", roundedSec)
+	}
+	return fmt.Sprintf("🟥 %.1f", sec)
 }
