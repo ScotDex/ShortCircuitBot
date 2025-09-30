@@ -8,6 +8,11 @@ import (
 	"syscall"
 )
 
+const (
+	logSuccess = "✅"
+	logWarn    = "⚠️"
+)
+
 func main() {
 	log.Println("--- Starting ShortCircuitBot ---")
 
@@ -30,7 +35,7 @@ func main() {
 	// Add connections from local Tripwire cache
 	tripwireData, err := loadTripwireData("tripwire_data.json")
 	if err != nil {
-		log.Printf("WARN: Could not load initial tripwire data: %v", err)
+		log.Printf("%s Could not load initial tripwire data: %v", logWarn, err)
 	}
 	if tripwireData != nil {
 		AddTripwireWormholesToGraph(universeGraph, tripwireData, esiClient)
@@ -39,7 +44,7 @@ func main() {
 	// Add live Thera connections from EVE-Scout
 	theraConnections, err := eveScoutClient.GetTheraConnections()
 	if err != nil {
-		log.Printf("WARN: Could not fetch initial Thera connections: %v", err)
+		log.Printf("%s Could not fetch initial Thera connections: %v", logWarn, err)
 	} else {
 		const theraSystemID = 31000005
 		for _, conn := range theraConnections {
@@ -49,11 +54,11 @@ func main() {
 				universeGraph[destID] = append(universeGraph[destID], theraSystemID)
 			}
 		}
-		log.Printf("✅ Added %d initial Thera connections.", len(theraConnections))
+		log.Printf("%s Added %d initial Thera connections.", logSuccess, len(theraConnections))
 	}
 
 	DeduplicateNeighbors(universeGraph)
-	log.Printf("✅ Graph built with %d systems.", len(universeGraph))
+	log.Printf("%s Graph built with %d systems.", logSuccess, len(universeGraph))
 
 	// --- 2. Create services with the fully-built graph ---
 	var graphMutex sync.RWMutex

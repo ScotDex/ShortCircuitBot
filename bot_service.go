@@ -138,30 +138,28 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
-			// --- 1. Load kill data from the local JSON file ---
+			// --- 1. Load kill data from the local file ---
 			killMap := make(map[int]int)
 			killFile, err := os.ReadFile("system_kills.json")
 			if err != nil {
 				log.Printf("[BOT] WARN: Could not read local kill data file: %v", err)
 			} else {
 				var allKills []EsiSystemKills
-				if err := json.Unmarshal(killFile, &allKills); err != nil {
-					log.Printf("[BOT] ERROR: Failed to parse local kill data: %v", err)
-				} else {
+				if err := json.Unmarshal(killFile, &allKills); err == nil {
 					for _, k := range allKills {
 						killMap[k.SystemID] = k.ShipKills
 					}
 				}
 			}
 
-			// --- 2. Fetch system names concurrently using the local kill data ---
+			// --- 2. Concurrently fetch system names and combine with local kill data ---
 			type SystemIntel struct {
 				Name            string
 				ThreatIndicator string
 			}
 			intelMap := make(map[int]SystemIntel)
 			var intelMutex sync.Mutex
-			var wg sync.WaitGroup
+			var wg sync.WaitGroup // The WaitGroup to fix the race condition
 
 			for _, systemID := range pathIDs {
 				wg.Add(1)
@@ -192,7 +190,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					intelMutex.Unlock()
 				}(systemID)
 			}
-			wg.Wait()
+			wg.Wait() // Wait for all goroutines to finish before proceeding
 
 			// --- 3. Build the final response ---
 			var pathWithKills []string
