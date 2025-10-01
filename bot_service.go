@@ -121,6 +121,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	var embed *discordgo.MessageEmbed
 	var embedAuthor = &discordgo.MessageEmbedAuthor{Name: "Short Circuit Bot", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"}
 
+	// Handle bad input
 	if err1 != nil || err2 != nil {
 		embed = &discordgo.MessageEmbed{
 			Author:      embedAuthor,
@@ -129,6 +130,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			Color:       0xff0000,
 		}
 	} else {
+		// Build avoid list
 		avoidList := make(map[int]bool)
 		if excludeInput != "" {
 			for _, sysName := range strings.Split(excludeInput, ",") {
@@ -140,8 +142,9 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 		}
-		avoidList[30100000] = true // Zarzakh
+		avoidList[30100000] = true // Zarzakh always excluded
 
+		// Find path
 		s.graphMutex.RLock()
 		pathIDs := FindPreferredPath(s.universeGraph, startID, endID, s.esiClient, preference, avoidList)
 		s.graphMutex.RUnlock()
@@ -153,9 +156,9 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
+			// Load kills
 			killMap := make(map[int]int)
-			killFile, err := os.ReadFile("system_kills.json")
-			if err == nil {
+			if killFile, err := os.ReadFile("system_kills.json"); err == nil {
 				var allKills []EsiSystemKills
 				if json.Unmarshal(killFile, &allKills) == nil {
 					for _, k := range allKills {
@@ -164,10 +167,10 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
+			// Load Tripwire data
 			sigMap := make(map[int]string)
 			eolMap := make(map[int]time.Time)
-			tripwireFile, err := os.ReadFile("tripwire_data.json")
-			if err == nil {
+			if tripwireFile, err := os.ReadFile("tripwire_data.json"); err == nil {
 				var tripwireData TripwireData
 				if json.Unmarshal(tripwireFile, &tripwireData) == nil {
 					for _, sig := range tripwireData.Signatures {
@@ -176,7 +179,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 							if sig.SignatureID != nil {
 								sigMap[sysID] = strings.ToUpper(*sig.SignatureID)
 							}
-							if sig.LifeLeft != "" { // Changed from `!= nil` to `!= ""`
+							if sig.LifeLeft != "" {
 								if eolTime, err := time.Parse("2006-01-02 15:04:05", sig.LifeLeft); err == nil {
 									eolMap[sysID] = eolTime
 								}
@@ -186,6 +189,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
+			// Collect intel
 			type SystemIntel struct {
 				Name        string
 				KillCount   int
@@ -229,24 +233,37 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			}
 			wg.Wait()
 
+			// Build detailed lines
 			var routeLines []string
-			header := fmt.Sprintf("%-14s | %-4s | %-10s | %-10s | %s", "System", "Sec", "SigID", "Info", "Kills")
-			routeLines = append(routeLines, header)
-			routeLines = append(routeLines, strings.Repeat("-", len(header)+2))
-
-			for i, systemID := range pathIDs {
+			for _, systemID := range pathIDs {
 				intel := intelMap[systemID]
-				arrow := "→ "
-				if i == 0 {
-					arrow = "  "
+
+				// Security status → emoji
+				secEmoji := "🟢"
+				if sec, _ := strconv.ParseFloat(intel.SecDisplay, 64); sec < 0.5 && sec >= 0.1 {
+					secEmoji = "🟠"
+				} else if sec < 0.1 {
+					secEmoji = "🔴"
 				}
 
-				line := fmt.Sprintf("%s%-12s | %-4s | %-10s | %-10s | 🔥 %d",
-					arrow, intel.Name, intel.SecDisplay, intel.SignatureID, intel.EolInfo, intel.KillCount)
+				line := fmt.Sprintf("%s **%s (%s)**", secEmoji, intel.Name, intel.SecDisplay)
+
+				if intel.KillCount > 0 {
+					line += fmt.Sprintf(" — 🔥 %d kills", intel.KillCount)
+				}
+				if intel.SignatureID != "" {
+					line += fmt.Sprintf(" — WH: %s", intel.SignatureID)
+				}
+				if intel.EolInfo != "" {
+					line += fmt.Sprintf(" — %s", intel.EolInfo)
+				}
+
 				routeLines = append(routeLines, line)
 			}
-			routeString := "```\n" + strings.Join(routeLines, "\n") + "\n```"
 
+			routeString := strings.Join(routeLines, "\n")
+
+			// Color coding based on jumps
 			jumpCount := len(pathIDs) - 1
 			embedColor := 0x4CAF50
 			if jumpCount > 10 {
@@ -256,6 +273,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				embedColor = 0xF44336
 			}
 
+			// Collect excluded system names
 			var excludedSysNames []string
 			for sysID := range avoidList {
 				if sysInfo, err := s.esiClient.GetSystemDetails(sysID); err == nil {
@@ -263,19 +281,22 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
+			// Build embed
 			embed = &discordgo.MessageEmbed{
-				Author:      embedAuthor,
-				Title:       "Route Calculated",
-				Color:       embedColor,
-				Timestamp:   time.Now().Format(time.RFC3339),
-				Description: routeString,
+				Author:    embedAuthor,
+				Title:     "Route Calculated",
+				Color:     embedColor,
+				Timestamp: time.Now().Format(time.RFC3339),
 				Fields: []*discordgo.MessageEmbedField{
 					{Name: "Start", Value: startName, Inline: true},
 					{Name: "End", Value: endName, Inline: true},
 					{Name: "Jumps", Value: fmt.Sprintf("%d", jumpCount), Inline: true},
+					{Name: "Route Details", Value: routeString},
 					{Name: "Excluded Systems", Value: strings.Join(excludedSysNames, ", ")},
 				},
-				Footer: &discordgo.MessageEmbedFooter{Text: "Zarzakh is ALWAYS excluded. Kills are up to 60min Old."},
+				Footer: &discordgo.MessageEmbedFooter{
+					Text: "Zarzakh is ALWAYS excluded. Kills are up to 60min old.",
+				},
 			}
 		}
 	}
