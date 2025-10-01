@@ -86,6 +86,41 @@ func (s *Service) ready(sess *discordgo.Session, event *discordgo.Ready) {
 }
 
 func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.InteractionCreate) {
+	// --- Handle Button Clicks ---
+	if i.Type == discordgo.InteractionMessageComponent {
+		if i.MessageComponentData().CustomID == "copy_route_button" {
+			if len(i.Message.Embeds) > 0 && len(i.Message.Embeds[0].Fields) > 0 {
+				var systems []string
+				// Find the "Route Details" field and parse the system names from it
+				for _, field := range i.Message.Embeds[0].Fields {
+					if field.Name == "Route Details" {
+						for _, line := range strings.Split(field.Value, "\n") {
+							// Extract the bolded system name from each line
+							if strings.Contains(line, "**") {
+								parts := strings.Split(line, "**")
+								if len(parts) > 1 {
+									systems = append(systems, parts[1])
+								}
+							}
+						}
+						break
+					}
+				}
+
+				copyableText := strings.Join(systems, "\n")
+				_ = sess.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: "```\n" + copyableText + "\n```",
+						Flags:   discordgo.MessageFlagsEphemeral,
+					},
+				})
+			}
+		}
+		return
+	}
+
+	// --- Handle Slash Commands ---
 	if i.Type != discordgo.InteractionApplicationCommand || i.ApplicationCommandData().Name != "route" {
 		return
 	}
@@ -119,9 +154,9 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 	endID, err2 := s.esiClient.GetSystemID(endName)
 
 	var embed *discordgo.MessageEmbed
+	var webhookEdit discordgo.WebhookEdit
 	var embedAuthor = &discordgo.MessageEmbedAuthor{Name: "Short Circuit Bot", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"}
 
-	// Handle bad input
 	if err1 != nil || err2 != nil {
 		embed = &discordgo.MessageEmbed{
 			Author:      embedAuthor,
@@ -130,7 +165,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			Color:       0xff0000,
 		}
 	} else {
-		// Build avoid list
 		avoidList := make(map[int]bool)
 		if excludeInput != "" {
 			for _, sysName := range strings.Split(excludeInput, ",") {
@@ -142,9 +176,8 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 		}
-		avoidList[30100000] = true // Zarzakh always excluded
+		avoidList[30100000] = true // Zarzakh
 
-		// Find path
 		s.graphMutex.RLock()
 		pathIDs := FindPreferredPath(s.universeGraph, startID, endID, s.esiClient, preference, avoidList)
 		s.graphMutex.RUnlock()
@@ -156,7 +189,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
-			// Load kills
 			killMap := make(map[int]int)
 			if killFile, err := os.ReadFile("system_kills.json"); err == nil {
 				var allKills []EsiSystemKills
@@ -167,7 +199,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
-			// Load Tripwire data
 			sigMap := make(map[int]string)
 			eolMap := make(map[int]time.Time)
 			if tripwireFile, err := os.ReadFile("tripwire_data.json"); err == nil {
@@ -189,7 +220,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
-			// Collect intel
 			type SystemIntel struct {
 				Name        string
 				KillCount   int
@@ -218,8 +248,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 						intel.SignatureID = sigID
 					}
 					if eolTime, ok := eolMap[id]; ok {
-						remaining := time.Until(eolTime)
-						if remaining > 0 {
+						if remaining := time.Until(eolTime); remaining > 0 {
 							intel.EolInfo = fmt.Sprintf("EOL: ~%dh", int(remaining.Hours()))
 						} else {
 							intel.EolInfo = "EOL"
@@ -233,12 +262,10 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			}
 			wg.Wait()
 
-			// Build detailed lines
 			var routeLines []string
 			for _, systemID := range pathIDs {
 				intel := intelMap[systemID]
 
-				// Security status → emoji
 				secEmoji := "🟢"
 				if sec, _ := strconv.ParseFloat(intel.SecDisplay, 64); sec < 0.5 && sec >= 0.1 {
 					secEmoji = "🟠"
@@ -260,10 +287,8 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 
 				routeLines = append(routeLines, line)
 			}
-
 			routeString := strings.Join(routeLines, "\n")
 
-			// Color coding based on jumps
 			jumpCount := len(pathIDs) - 1
 			embedColor := 0x4CAF50
 			if jumpCount > 10 {
@@ -273,7 +298,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				embedColor = 0xF44336
 			}
 
-			// Collect excluded system names
 			var excludedSysNames []string
 			for sysID := range avoidList {
 				if sysInfo, err := s.esiClient.GetSystemDetails(sysID); err == nil {
@@ -281,7 +305,6 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				}
 			}
 
-			// Build embed
 			embed = &discordgo.MessageEmbed{
 				Author:    embedAuthor,
 				Title:     "Route Calculated",
@@ -298,16 +321,32 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					Text: "Zarzakh is ALWAYS excluded. Kills are up to 60min old.",
 				},
 			}
+
+			components := []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label:    "Copy Route",
+							Style:    discordgo.SecondaryButton,
+							Emoji:    &discordgo.ComponentEmoji{Name: "📋"},
+							CustomID: "copy_route_button",
+						},
+					},
+				},
+			}
+			webhookEdit.Components = &components
 		}
 	}
 
-	_, err = sess.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Embeds: &[]*discordgo.MessageEmbed{embed},
-	})
+	webhookEdit.Embeds = &[]*discordgo.MessageEmbed{embed}
+	_, err = sess.InteractionResponseEdit(i.Interaction, &webhookEdit)
 	if err != nil {
 		log.Printf("[BOT] ERROR: Failed to send webhook edit: %v", err)
 	}
 }
+
+// NOTE: FindPreferredPath is unchanged and remains below.
+// ...
 
 func FindPreferredPath(graph map[int][]int, startID, endID int, esiClient *ESIClient, preference string, avoidList map[int]bool) []int {
 	costs := make(map[int]float64)
