@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -11,8 +12,6 @@ import (
 type KillDataUpdater struct {
 	esiClient *ESIClient
 	filePath  string
-	ticker    *time.Ticker
-	quit      chan struct{}
 }
 
 // NewKillDataUpdater creates a new updater service.
@@ -20,62 +19,62 @@ func NewKillDataUpdater(client *ESIClient, filePath string) *KillDataUpdater {
 	return &KillDataUpdater{
 		esiClient: client,
 		filePath:  filePath,
-		// The ticker will fire every hour to trigger an update.
-		ticker: time.NewTicker(1 * time.Hour),
-		quit:   make(chan struct{}),
 	}
 }
 
 // Start launches the background updater. Run this as a goroutine.
-func (u *KillDataUpdater) Start() {
+func (u *KillDataUpdater) Start(wg *sync.WaitGroup, quit chan struct{}) {
+	defer wg.Done()
 	log.Println("[UPDATER] Starting background kill data updater...")
 
-	// Run once immediately on startup.
-	u.fetchAndSave()
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
 
-	// Loop forever, waiting for the ticker or a quit signal.
+	u.fetchAndSave() // Run once immediately on startup.
+
 	for {
 		select {
-		case <-u.ticker.C:
-			// The hourly ticker has fired, so fetch new data.
+		case <-ticker.C:
 			u.fetchAndSave()
-		case <-u.quit:
-			// The service is stopping.
-			u.ticker.Stop()
+		case <-quit:
+			log.Println("[UPDATER] Shutdown signal received, exiting.")
 			return
 		}
 	}
 }
 
-// Stop safely shuts down the updater service.
-func (u *KillDataUpdater) Stop() {
-	log.Println("[UPDATER] Stopping background kill data updater...")
-	close(u.quit)
-}
-
-// fetchAndSave gets the data from ESI and writes it to the local file.
+// fetchAndSave gets the data from ESI and atomically writes it to the local file.
 func (u *KillDataUpdater) fetchAndSave() {
 	log.Println("[UPDATER] Fetching latest system kill data from ESI...")
-	// GetSystemKills is expected to fetch data for all systems, so no specific systemID is passed.
-	kills, err := u.esiClient.GetSystemKills() // Pass 0 or a dummy value if the ESI endpoint doesn't require a specific system ID for all kills.
+	kills, err := u.esiClient.GetSystemKills()
 	if err != nil {
 		log.Printf("[UPDATER] ERROR: Failed to fetch kills from ESI: %v", err)
 		return
 	}
 
-	// Convert the data to JSON format.
 	jsonData, err := json.Marshal(kills)
 	if err != nil {
 		log.Printf("[UPDATER] ERROR: Failed to convert kills to JSON: %v", err)
 		return
 	}
 
-	// Write the JSON data to the file, overwriting it if it exists.
-	err = os.WriteFile(u.filePath, jsonData, 0644)
+	// --- PERFORMANCE & SAFETY IMPROVEMENT ---
+	// Write to a temporary file first.
+	tempFilePath := u.filePath + ".tmp"
+	err = os.WriteFile(tempFilePath, jsonData, 0644)
 	if err != nil {
-		log.Printf("[UPDATER] ERROR: Failed to write kills to file '%s': %v", u.filePath, err)
+		log.Printf("[UPDATER] ERROR: Failed to write to temporary file '%s': %v", tempFilePath, err)
 		return
 	}
+
+	// Atomically rename the temporary file to the final destination.
+	// This is an instant operation and prevents file corruption.
+	err = os.Rename(tempFilePath, u.filePath)
+	if err != nil {
+		log.Printf("[UPDATER] ERROR: Failed to rename temp file to '%s': %v", u.filePath, err)
+		return
+	}
+	// --- END IMPROVEMENT ---
 
 	log.Printf("[UPDATER] ✅ Successfully saved kill data to %s.", u.filePath)
 }

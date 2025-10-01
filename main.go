@@ -93,7 +93,7 @@ func main() {
 	go botService.Start(&servicesWg, quit)
 	go theraUpdater.Start(&servicesWg, quit)
 
-	go killUpdater.Start()
+	go killUpdater.Start(&servicesWg, quit)
 	go startHealthCheckServer()
 
 	servicesWg.Wait()

@@ -14,78 +14,69 @@ import (
 )
 
 // --- Structs ---
-type (
-	ESINameResponse struct {
+
+// esiName represents the universal ESI response for an ID-to-name lookup.
+type esiName struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// esiIDResults holds the results from the /universe/ids endpoint.
+type esiIDResults struct {
+	Systems []struct {
+		ID   int    `json:"id"`
 		Name string `json:"name"`
-	}
-	ESIIDResponse struct {
-		Characters []struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
-		} `json:"characters"`
-		Systems []struct {
-			ID   int    `json:"id"`
-			Name string `json:"name"`
-		} `json:"systems"`
-	}
-	ESISystemInfo struct {
-		Name            string  `json:"name"`
-		SecurityStatus  float64 `json:"security_status"`
-		Stargates       []int   `json:"stargates"`
-		Stations        []int   `json:"stations"`
-		SystemID        int     `json:"system_id"`
-		ConstellationID int     `json:"constellation_id"`
-		RegionID        int     `json:"region_id"`
-	}
-	ESIRegionInfo struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		RegionID    int    `json:"region_id"`
-	}
-	ESIClient struct {
-		httpClient *http.Client
-		baseURL    string
-		userAgent  string
+	} `json:"solar_systems"`
+}
 
-		cacheMutex       sync.RWMutex
-		characterNames   map[int]string
-		corporationNames map[int]string
-		shipNames        map[int]string
-		systemNames      map[int]string
-		characterIDs     map[string]int
-		systemInfoCache  map[int]*ESISystemInfo
+// ESISystemInfo holds detailed information about a solar system.
+type ESISystemInfo struct {
+	Name           string  `json:"name"`
+	SecurityStatus float64 `json:"security_status"`
+	SystemID       int     `json:"system_id"`
+}
 
-		regionNames        map[int]string
-		constellationNames map[int]string
-	}
-)
+// EsiSystemKills defines the structure for the system kills endpoint.
+type EsiSystemKills struct {
+	NpcKills  int `json:"npc_kills"`
+	PodKills  int `json:"pod_kills"`
+	ShipKills int `json:"ship_kills"`
+	SystemID  int `json:"system_id"`
+}
+
+// ESIClient manages all communication with the EVE Online ESI.
+type ESIClient struct {
+	httpClient *http.Client
+	baseURL    string
+	userAgent  string
+
+	cacheMutex      sync.RWMutex
+	nameCache       map[int]string         // A single cache for all ID->Name lookups
+	systemInfoCache map[int]*ESISystemInfo // Cache for detailed system info
+	systemIDCache   map[string]int         // Cache for Name->ID lookups
+}
 
 // --- Constructor ---
+
 func NewESIClient(contactInfo string) *ESIClient {
 	return &ESIClient{
 		httpClient: &http.Client{
-			Timeout:   15 * time.Second,
-			Transport: &http.Transport{DisableCompression: false},
+			Timeout: 15 * time.Second,
 		},
-		baseURL:          "https://esi.evetech.net/latest",
-		userAgent:        fmt.Sprintf("ShortCircuit Bot/0.1 (%s)", contactInfo),
-		characterNames:   map[int]string{},
-		corporationNames: map[int]string{},
-		shipNames:        map[int]string{},
-		systemNames:      map[int]string{},
-		characterIDs:     map[string]int{},
-		systemInfoCache:  map[int]*ESISystemInfo{},
-
-		regionNames:        map[int]string{},
-		constellationNames: map[int]string{},
+		baseURL:         "https://esi.evetech.net/latest",
+		userAgent:       fmt.Sprintf("ShortCircuit Bot/0.1 (%s)", contactInfo),
+		nameCache:       make(map[int]string),
+		systemInfoCache: make(map[int]*ESISystemInfo),
+		systemIDCache:   make(map[string]int),
 	}
 }
 
-// --- Core HTTP ---
-func (c *ESIClient) makeRequest(method, url string, body io.Reader, target interface{}) error {
-	req, err := http.NewRequest(method, url, body)
+// --- Core HTTP Logic ---
+
+func (c *ESIClient) makeRequest(method, endpoint string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, c.baseURL+endpoint, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	if method == http.MethodPost {
@@ -94,141 +85,25 @@ func (c *ESIClient) makeRequest(method, url string, body io.Reader, target inter
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ESI returned %s", resp.Status)
+		return nil, fmt.Errorf("ESI returned %s", resp.Status)
 	}
-	return json.NewDecoder(resp.Body).Decode(target)
+	return io.ReadAll(resp.Body)
 }
 
-// --- Character ID <-> Name ---
-func (c *ESIClient) GetCharacterID(name string) (int, error) {
+// --- Name & ID Resolution ---
+
+// GetSystemID resolves a system name to its ID.
+func (c *ESIClient) GetSystemID(name string) (int, error) {
 	c.cacheMutex.RLock()
-	if id, ok := c.characterIDs[name]; ok {
+	if id, ok := c.systemIDCache[strings.ToLower(name)]; ok {
 		c.cacheMutex.RUnlock()
 		return id, nil
 	}
-	c.cacheMutex.RUnlock()
-
-	var idData ESIIDResponse
-	body, _ := json.Marshal([]string{name})
-	if err := c.makeRequest(http.MethodPost, c.baseURL+"/universe/ids/", bytes.NewBuffer(body), &idData); err != nil {
-		return 0, err
-	}
-	if len(idData.Characters) == 0 {
-		return 0, fmt.Errorf("character not found: %s", name)
-	}
-
-	id := idData.Characters[0].ID
-	c.cacheMutex.Lock()
-	c.characterIDs[name] = id
-	c.cacheMutex.Unlock()
-	return id, nil
-}
-
-// --- Generic ID -> Name ---
-func (c *ESIClient) getName(id int, category string, cache map[int]string) string {
-	if id == 0 {
-		return "Unknown"
-	}
-	c.cacheMutex.RLock()
-	if name, ok := cache[id]; ok {
-		c.cacheMutex.RUnlock()
-		return name
-	}
-	c.cacheMutex.RUnlock()
-
-	var resp ESINameResponse
-	url := fmt.Sprintf("%s/%s/%d/", c.baseURL, category, id)
-	if err := c.makeRequest(http.MethodGet, url, nil, &resp); err != nil {
-		log.Printf("Failed to get name for ID %d (%s): %v", id, category, err)
-		return "Unknown"
-	}
-
-	c.cacheMutex.Lock()
-	cache[id] = resp.Name
-	c.cacheMutex.Unlock()
-	return resp.Name
-}
-
-// --- Public Name Helpers ---
-func (c *ESIClient) GetCharacterName(id int) string {
-	return c.getName(id, "characters", c.characterNames)
-}
-func (c *ESIClient) GetCorporationName(id int) string {
-	return c.getName(id, "corporations", c.corporationNames)
-}
-func (c *ESIClient) GetShipName(id int) string { return c.getName(id, "universe/types", c.shipNames) }
-func (c *ESIClient) GetConstellationName(id int) string {
-	return c.getName(id, "universe/constellations", c.constellationNames)
-}
-
-func (c *ESIClient) GetSystemName(id int) string {
-	c.cacheMutex.RLock()
-	defer c.cacheMutex.RUnlock()
-	if sys, ok := c.systemInfoCache[id]; ok {
-		return sys.Name
-	}
-	return "Unknown"
-}
-
-func (c *ESIClient) GetRegionName(id int) string {
-	if id == 0 {
-		return "Unknown"
-	}
-	c.cacheMutex.RLock()
-	if name, ok := c.regionNames[id]; ok {
-		c.cacheMutex.RUnlock()
-		return name
-	}
-	c.cacheMutex.RUnlock()
-
-	var region ESIRegionInfo
-	url := fmt.Sprintf("%s/universe/regions/%d/", c.baseURL, id)
-	if err := c.makeRequest(http.MethodGet, url, nil, &region); err != nil {
-		log.Printf("Failed to get region name for ID %d: %v", id, err)
-		return "Unknown"
-	}
-
-	c.cacheMutex.Lock()
-	c.regionNames[id] = region.Name
-	c.cacheMutex.Unlock()
-	return region.Name
-}
-
-// --- System Cache ---
-func (c *ESIClient) LoadSystemCache(filename string) error {
-	f, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("failed to open cache file: %w", err)
-	}
-	defer f.Close()
-
-	c.cacheMutex.Lock()
-	defer c.cacheMutex.Unlock()
-	if err := json.NewDecoder(f).Decode(&c.systemInfoCache); err != nil {
-		return fmt.Errorf("failed to unmarshal system cache: %w", err)
-	}
-	log.Printf("Loaded %d systems from cache.", len(c.systemInfoCache))
-	return nil
-}
-
-func (c *ESIClient) GetSystemDetails(id int) (*ESISystemInfo, error) {
-	c.cacheMutex.RLock()
-	defer c.cacheMutex.RUnlock()
-	if sys, ok := c.systemInfoCache[id]; ok {
-		return sys, nil
-	}
-	return nil, fmt.Errorf("system ID %d not found", id)
-}
-
-func (c *ESIClient) GetSystemID(name string) (int, error) {
-	// For case-insensitivity, we can use a local cache
-	c.cacheMutex.RLock()
-	// This is a simple loop, but effective for a small number of cached systems
 	for id, sysInfo := range c.systemInfoCache {
 		if strings.EqualFold(sysInfo.Name, name) {
 			c.cacheMutex.RUnlock()
@@ -237,38 +112,115 @@ func (c *ESIClient) GetSystemID(name string) (int, error) {
 	}
 	c.cacheMutex.RUnlock()
 
-	var idData ESIIDResponse
 	body, _ := json.Marshal([]string{name})
-	if err := c.makeRequest(http.MethodPost, c.baseURL+"/universe/ids/", bytes.NewBuffer(body), &idData); err != nil {
+	respBytes, err := c.makeRequest(http.MethodPost, "/universe/ids/", bytes.NewBuffer(body))
+	if err != nil {
+		return 0, err
+	}
+
+	var idData esiIDResults
+	if err := json.Unmarshal(respBytes, &idData); err != nil {
 		return 0, err
 	}
 	if len(idData.Systems) == 0 {
 		return 0, fmt.Errorf("system not found: %s", name)
 	}
 
-	return idData.Systems[0].ID, nil
+	id := idData.Systems[0].ID
+	c.cacheMutex.Lock()
+	c.systemIDCache[strings.ToLower(name)] = id
+	c.cacheMutex.Unlock()
+	return id, nil
 }
 
-// In your esi_client.go file
+// getName resolves a single ID to its name for a given category.
+func (c *ESIClient) getName(id int, category string) string {
+	if id == 0 {
+		return "Unknown"
+	}
+	c.cacheMutex.RLock()
+	if name, ok := c.nameCache[id]; ok {
+		c.cacheMutex.RUnlock()
+		return name
+	}
+	c.cacheMutex.RUnlock()
 
-// EsiSystemKills defines the structure for the system kills endpoint
-type EsiSystemKills struct {
-	NpcKills  int `json:"npc_kills"`
-	PodKills  int `json:"pod_kills"`
-	ShipKills int `json:"ship_kills"`
-	SystemID  int `json:"system_id"`
+	// Bulk endpoint for names is more efficient
+	ids := []int{id}
+	body, _ := json.Marshal(ids)
+	respBytes, err := c.makeRequest(http.MethodPost, "/universe/names/", bytes.NewBuffer(body))
+	if err != nil {
+		log.Printf("Failed to get name for ID %d: %v", id, err)
+		return "Unknown"
+	}
+
+	var names []esiName
+	if err := json.Unmarshal(respBytes, &names); err != nil || len(names) == 0 {
+		log.Printf("Failed to decode name for ID %d: %v", id, err)
+		return "Unknown"
+	}
+
+	name := names[0].Name
+	c.cacheMutex.Lock()
+	c.nameCache[id] = name
+	c.cacheMutex.Unlock()
+	return name
 }
 
+// --- Public Name Helpers ---
+
+func (c *ESIClient) GetSystemName(id int) string { return c.getName(id, "solar_system") }
+func (c *ESIClient) GetRegionName(id int) string { return c.getName(id, "region") }
+
+// --- System Data ---
+
+// LoadSystemCache loads the system info from a local file.
+func (c *ESIClient) LoadSystemCache(filename string) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("failed to open cache file: %w", err)
+	}
+	defer f.Close()
+
+	var cacheData map[int]*ESISystemInfo
+	if err := json.NewDecoder(f).Decode(&cacheData); err != nil {
+		return fmt.Errorf("failed to unmarshal system cache: %w", err)
+	}
+
+	c.cacheMutex.Lock()
+	c.systemInfoCache = cacheData
+	// Pre-populate the Name->ID cache for faster lookups
+	for id, sysInfo := range cacheData {
+		c.systemIDCache[strings.ToLower(sysInfo.Name)] = id
+	}
+	c.cacheMutex.Unlock()
+
+	log.Printf("Loaded %d systems from cache.", len(c.systemInfoCache))
+	return nil
+}
+
+// GetSystemDetails retrieves full system details from the cache.
+func (c *ESIClient) GetSystemDetails(id int) (*ESISystemInfo, error) {
+	c.cacheMutex.RLock()
+	defer c.cacheMutex.RUnlock()
+	if sys, ok := c.systemInfoCache[id]; ok {
+		return sys, nil
+	}
+	// Fallback to live API if not in cache (optional, but robust)
+	// For now, we'll just return an error as per original logic.
+	return nil, fmt.Errorf("system ID %d not found in cache", id)
+}
+
+// GetSystemKills fetches recent kill data.
 func (c *ESIClient) GetSystemKills() ([]EsiSystemKills, error) {
-	// Note: ESI returns a list, but for this endpoint, it's a list with one item.
-	var kills []EsiSystemKills
-
-	// In GetSystemKills...
-	url := fmt.Sprintf("%s/universe/system_kills?system_id=%d", c.baseURL)
-	err := c.makeRequest(http.MethodGet, url, nil, &kills)
+	respBytes, err := c.makeRequest(http.MethodGet, "/universe/system_kills/", nil)
 	if err != nil {
 		return nil, err
 	}
 
+	var kills []EsiSystemKills
+	if err := json.Unmarshal(respBytes, &kills); err != nil {
+		return nil, err
+	}
 	return kills, nil
 }
