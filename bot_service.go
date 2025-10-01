@@ -85,78 +85,101 @@ func (s *Service) ready(sess *discordgo.Session, event *discordgo.Ready) {
 	log.Println("[BOT] Slash commands registered.")
 }
 
+// ---- interactionCreate (dispatcher) ----
 func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.InteractionCreate) {
-	// --- Handle Button Clicks ---
+	// Button clicks
 	if i.Type == discordgo.InteractionMessageComponent {
-		if i.MessageComponentData().CustomID == "copy_route_button" {
-			if len(i.Message.Embeds) > 0 && len(i.Message.Embeds[0].Fields) > 0 {
-				var systems []string
-				// Find the "Route Details" field and parse the system names from it
-				for _, field := range i.Message.Embeds[0].Fields {
-					if field.Name == "Route Details" {
-						for _, line := range strings.Split(field.Value, "\n") {
-							// Extract the bolded system name from each line
-							if strings.Contains(line, "**") {
-								parts := strings.Split(line, "**")
-								if len(parts) > 1 {
-									systems = append(systems, parts[1])
-								}
-							}
-						}
-						break
-					}
-				}
-
-				copyableText := strings.Join(systems, "\n")
-				_ = sess.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-					Type: discordgo.InteractionResponseChannelMessageWithSource,
-					Data: &discordgo.InteractionResponseData{
-						Content: "```\n" + copyableText + "\n```",
-						Flags:   discordgo.MessageFlagsEphemeral,
-					},
-				})
-			}
+		if err := s.handleButtonClick(sess, i); err != nil {
+			log.Printf("[BOT] ERROR handling button: %v", err)
 		}
 		return
 	}
 
-	// --- Handle Slash Commands ---
+	// Slash command: route
 	if i.Type != discordgo.InteractionApplicationCommand || i.ApplicationCommandData().Name != "route" {
 		return
 	}
 
-	err := sess.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := sess.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-	})
-	if err != nil {
+	}); err != nil {
 		log.Printf("[BOT] ERROR: Failed to defer interaction response: %v", err)
 		return
 	}
 
-	options := i.ApplicationCommandData().Options
-	optionMap := make(map[string]*discordgo.ApplicationCommandInteractionDataOption)
-	for _, opt := range options {
-		optionMap[opt.Name] = opt
+	// Process the route command
+	if err := s.handleRouteCommand(sess, i); err != nil {
+		log.Printf("[BOT] ERROR processing route: %v", err)
+	}
+}
+
+// ---- button handler: Copy Route ----
+func (s *Service) handleButtonClick(sess *discordgo.Session, i *discordgo.InteractionCreate) error {
+	data := i.MessageComponentData()
+	if data.CustomID != "copy_route_button" {
+		return nil
 	}
 
-	startName := optionMap["start"].StringValue()
-	endName := optionMap["end"].StringValue()
-	excludeInput := ""
-	if opt, exists := optionMap["exclude"]; exists {
-		excludeInput = opt.StringValue()
+	if len(i.Message.Embeds) == 0 {
+		return nil
 	}
+	embed := i.Message.Embeds[0]
+
+	// find Route Details field and pull bolded system names
+	var systems []string
+	for _, f := range embed.Fields {
+		if f.Name == "Route Details" {
+			for _, line := range strings.Split(f.Value, "\n") {
+				// the Name was formatted like: "🟢◦ **SystemName (0.9)** — ..." so extract between ** **
+				if strings.Contains(line, "**") {
+					parts := strings.Split(line, "**")
+					if len(parts) > 1 {
+						// parts[1] contains "SystemName (0.9)"; strip trailing sec paren to return raw name only if desired
+						namePart := parts[1]
+						// optionally trim "(sec)" from the name if present
+						if idx := strings.LastIndex(namePart, " ("); idx > 0 {
+							namePart = namePart[:idx]
+						}
+						systems = append(systems, strings.TrimSpace(namePart))
+					}
+				}
+			}
+			break
+		}
+	}
+
+	copyableText := strings.Join(systems, "\n")
+	return sess.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "```\n" + copyableText + "\n```",
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+}
+
+// ---- main route handler ----
+func (s *Service) handleRouteCommand(sess *discordgo.Session, i *discordgo.InteractionCreate) error {
+	opts := s.parseOptions(i.ApplicationCommandData().Options)
+	startName, endName := opts["start"], opts["end"]
+	excludeInput := opts["exclude"]
 	preference := "shortest"
-	if opt, exists := optionMap["preference"]; exists {
-		preference = opt.StringValue()
+	if v, ok := opts["preference"]; ok && v != "" {
+		preference = v
 	}
 
 	startID, err1 := s.esiClient.GetSystemID(startName)
 	endID, err2 := s.esiClient.GetSystemID(endName)
 
-	var embed *discordgo.MessageEmbed
-	var webhookEdit discordgo.WebhookEdit
-	var embedAuthor = &discordgo.MessageEmbedAuthor{Name: "Short Circuit Bot", IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64"}
+	embedAuthor := &discordgo.MessageEmbedAuthor{
+		Name:    "Short Circuit Bot",
+		IconURL: "https://images.evetech.net/corporations/98330748/logo?size=64",
+	}
 
+	var embed *discordgo.MessageEmbed
+	var components []discordgo.MessageComponent
+
+	// invalid system names
 	if err1 != nil || err2 != nil {
 		embed = &discordgo.MessageEmbed{
 			Author:      embedAuthor,
@@ -165,19 +188,10 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 			Color:       0xff0000,
 		}
 	} else {
-		avoidList := make(map[int]bool)
-		if excludeInput != "" {
-			for _, sysName := range strings.Split(excludeInput, ",") {
-				sysName = strings.TrimSpace(sysName)
-				if sysName != "" {
-					if sysID, err := s.esiClient.GetSystemID(sysName); err == nil {
-						avoidList[sysID] = true
-					}
-				}
-			}
-		}
-		avoidList[30100000] = true // Zarzakh
+		avoidList := s.buildAvoidList(excludeInput)
+		avoidList[30100000] = true // Zarzakh always excluded
 
+		// pathfinding (guarded by RLock)
 		s.graphMutex.RLock()
 		pathIDs := FindPreferredPath(s.universeGraph, startID, endID, s.esiClient, preference, avoidList)
 		s.graphMutex.RUnlock()
@@ -189,105 +203,15 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				Color:       0xff0000,
 			}
 		} else {
-			killMap := make(map[int]int)
-			if killFile, err := os.ReadFile("system_kills.json"); err == nil {
-				var allKills []EsiSystemKills
-				if json.Unmarshal(killFile, &allKills) == nil {
-					for _, k := range allKills {
-						killMap[k.SystemID] = k.ShipKills
-					}
-				}
-			}
+			// load supporting data (file reads)
+			killMap := s.loadKills("system_kills.json")
+			sigMap, eolMap := s.loadTripwire("tripwire_data.json")
 
-			sigMap := make(map[int]string)
-			eolMap := make(map[int]time.Time)
-			if tripwireFile, err := os.ReadFile("tripwire_data.json"); err == nil {
-				var tripwireData TripwireData
-				if json.Unmarshal(tripwireFile, &tripwireData) == nil {
-					for _, sig := range tripwireData.Signatures {
-						sysID, _ := strconv.Atoi(sig.SystemID)
-						if sysID != 0 {
-							if sig.SignatureID != nil {
-								sigMap[sysID] = strings.ToUpper(*sig.SignatureID)
-							}
-							if sig.LifeLeft != "" {
-								if eolTime, err := time.Parse("2006-01-02 15:04:05", sig.LifeLeft); err == nil {
-									eolMap[sysID] = eolTime
-								}
-							}
-						}
-					}
-				}
-			}
+			// fetch system intel concurrently
+			intelMap := s.fetchIntelForPath(pathIDs, killMap, sigMap, eolMap)
 
-			type SystemIntel struct {
-				Name        string
-				KillCount   int
-				SecDisplay  string
-				SignatureID string
-				EolInfo     string
-			}
-			intelMap := make(map[int]SystemIntel)
-			var intelMutex sync.Mutex
-			var wg sync.WaitGroup
-
-			for _, systemID := range pathIDs {
-				wg.Add(1)
-				go func(id int) {
-					defer wg.Done()
-
-					intel := SystemIntel{Name: fmt.Sprintf("Unknown (%d)", id), SecDisplay: "N/A"}
-					if sysInfo, err := s.esiClient.GetSystemDetails(id); err == nil {
-						intel.Name = sysInfo.Name
-						intel.SecDisplay = fmt.Sprintf("%.1f", sysInfo.SecurityStatus)
-					}
-					if kills, ok := killMap[id]; ok {
-						intel.KillCount = kills
-					}
-					if sigID, ok := sigMap[id]; ok {
-						intel.SignatureID = sigID
-					}
-					if eolTime, ok := eolMap[id]; ok {
-						if remaining := time.Until(eolTime); remaining > 0 {
-							intel.EolInfo = fmt.Sprintf("EOL: ~%dh", int(remaining.Hours()))
-						} else {
-							intel.EolInfo = "EOL"
-						}
-					}
-
-					intelMutex.Lock()
-					intelMap[id] = intel
-					intelMutex.Unlock()
-				}(systemID)
-			}
-			wg.Wait()
-
-			var routeLines []string
-			for _, systemID := range pathIDs {
-				intel := intelMap[systemID]
-
-				secEmoji := "🟢"
-				if sec, _ := strconv.ParseFloat(intel.SecDisplay, 64); sec < 0.5 && sec >= 0.1 {
-					secEmoji = "🟠"
-				} else if sec < 0.1 {
-					secEmoji = "🔴"
-				}
-
-				line := fmt.Sprintf("%s **%s (%s)**", secEmoji, intel.Name, intel.SecDisplay)
-
-				if intel.KillCount > 0 {
-					line += fmt.Sprintf(" — 🔥 %d kills", intel.KillCount)
-				}
-				if intel.SignatureID != "" {
-					line += fmt.Sprintf(" — WH: %s", intel.SignatureID)
-				}
-				if intel.EolInfo != "" {
-					line += fmt.Sprintf(" — %s", intel.EolInfo)
-				}
-
-				routeLines = append(routeLines, line)
-			}
-			routeString := strings.Join(routeLines, "\n")
+			// format route lines (detailed style with small colored dots)
+			routeString := s.formatRouteString(pathIDs, intelMap)
 
 			jumpCount := len(pathIDs) - 1
 			embedColor := 0x4CAF50
@@ -298,6 +222,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				embedColor = 0xF44336
 			}
 
+			// excluded system names for display
 			var excludedSysNames []string
 			for sysID := range avoidList {
 				if sysInfo, err := s.esiClient.GetSystemDetails(sysID); err == nil {
@@ -322,7 +247,7 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 				},
 			}
 
-			components := []discordgo.MessageComponent{
+			components = []discordgo.MessageComponent{
 				discordgo.ActionsRow{
 					Components: []discordgo.MessageComponent{
 						discordgo.Button{
@@ -334,20 +259,173 @@ func (s *Service) interactionCreate(sess *discordgo.Session, i *discordgo.Intera
 					},
 				},
 			}
-			webhookEdit.Components = &components
 		}
 	}
 
-	webhookEdit.Embeds = &[]*discordgo.MessageEmbed{embed}
-	_, err = sess.InteractionResponseEdit(i.Interaction, &webhookEdit)
-	if err != nil {
-		log.Printf("[BOT] ERROR: Failed to send webhook edit: %v", err)
+	webhookEdit := discordgo.WebhookEdit{
+		Embeds:     &[]*discordgo.MessageEmbed{embed},
+		Components: &components,
 	}
+	_, err := sess.InteractionResponseEdit(i.Interaction, &webhookEdit)
+	return err
 }
 
-// NOTE: FindPreferredPath is unchanged and remains below.
-// ...
+// ---- small helpers ----
 
+func (s *Service) parseOptions(options []*discordgo.ApplicationCommandInteractionDataOption) map[string]string {
+	result := map[string]string{}
+	for _, opt := range options {
+		if opt == nil || opt.Name == "" {
+			continue
+		}
+		result[opt.Name] = opt.StringValue()
+	}
+	return result
+}
+
+func (s *Service) buildAvoidList(excludeInput string) map[int]bool {
+	avoid := make(map[int]bool)
+	if excludeInput == "" {
+		return avoid
+	}
+	for _, sysName := range strings.Split(excludeInput, ",") {
+		sysName = strings.TrimSpace(sysName)
+		if sysName == "" {
+			continue
+		}
+		if sysID, err := s.esiClient.GetSystemID(sysName); err == nil {
+			avoid[sysID] = true
+		}
+	}
+	return avoid
+}
+
+func (s *Service) loadKills(path string) map[int]int {
+	killMap := make(map[int]int)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return killMap
+	}
+	var all []EsiSystemKills
+	if err := json.Unmarshal(b, &all); err != nil {
+		log.Printf("[BOT] WARN: failed to parse %s: %v", path, err)
+		return killMap
+	}
+	for _, k := range all {
+		killMap[k.SystemID] = k.ShipKills
+	}
+	return killMap
+}
+
+func (s *Service) loadTripwire(path string) (map[int]string, map[int]time.Time) {
+	sigMap := make(map[int]string)
+	eolMap := make(map[int]time.Time)
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return sigMap, eolMap
+	}
+	var td TripwireData
+	if err := json.Unmarshal(b, &td); err != nil {
+		log.Printf("[BOT] WARN: failed to parse %s: %v", path, err)
+		return sigMap, eolMap
+	}
+	for _, sig := range td.Signatures {
+		sysID, _ := strconv.Atoi(sig.SystemID)
+		if sysID == 0 {
+			continue
+		}
+		if sig.SignatureID != nil {
+			sigMap[sysID] = strings.ToUpper(*sig.SignatureID)
+		}
+		if sig.LifeLeft != "" {
+			if eol, err := time.Parse("2006-01-02 15:04:05", sig.LifeLeft); err == nil {
+				eolMap[sysID] = eol
+			}
+		}
+	}
+	return sigMap, eolMap
+}
+
+type SystemIntel struct {
+	Name        string
+	KillCount   int
+	SecDisplay  string
+	SignatureID string
+	EolInfo     string
+}
+
+func (s *Service) fetchIntelForPath(path []int, killMap map[int]int, sigMap map[int]string, eolMap map[int]time.Time) map[int]SystemIntel {
+	intelMap := make(map[int]SystemIntel)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, id := range path {
+		wg.Add(1)
+		go func(sysID int) {
+			defer wg.Done()
+			intel := SystemIntel{Name: fmt.Sprintf("Unknown (%d)", sysID), SecDisplay: "N/A"}
+
+			if si, err := s.esiClient.GetSystemDetails(sysID); err == nil {
+				intel.Name = si.Name
+				intel.SecDisplay = fmt.Sprintf("%.1f", si.SecurityStatus)
+			}
+			if k := killMap[sysID]; k != 0 {
+				intel.KillCount = k
+			}
+			if sig, ok := sigMap[sysID]; ok {
+				intel.SignatureID = sig
+			}
+			if eol, ok := eolMap[sysID]; ok {
+				if remaining := time.Until(eol); remaining > 0 {
+					intel.EolInfo = fmt.Sprintf("EOL: ~%dh", int(remaining.Hours()))
+				} else {
+					intel.EolInfo = "EOL"
+				}
+			}
+
+			mu.Lock()
+			intelMap[sysID] = intel
+			mu.Unlock()
+		}(id)
+	}
+
+	wg.Wait()
+	return intelMap
+}
+
+// formatRouteString builds the detailed embed field using small colored dots + tiny hollow dot suffix
+func (s *Service) formatRouteString(path []int, intelMap map[int]SystemIntel) string {
+	lines := make([]string, 0, len(path))
+	for _, sysID := range path {
+		intel := intelMap[sysID]
+		secFloat, _ := strconv.ParseFloat(intel.SecDisplay, 64)
+
+		// small colored dot + tiny hollow suffix to reduce visual weight: e.g. "🟢◦"
+		secMarker := "🟢◦"
+		if secFloat < 0.5 && secFloat >= 0.1 {
+			secMarker = "🟠◦"
+		} else if secFloat < 0.1 {
+			secMarker = "🔴◦"
+		}
+
+		// Build line: marker, bold name (with sec), optional bits
+		line := fmt.Sprintf("%s **%s (%s)**", secMarker, intel.Name, intel.SecDisplay)
+		if intel.KillCount > 0 {
+			line += fmt.Sprintf(" — 🔥 %d kills", intel.KillCount)
+		}
+		if intel.SignatureID != "" {
+			line += fmt.Sprintf(" — WH: %s", intel.SignatureID)
+		}
+		if intel.EolInfo != "" {
+			line += fmt.Sprintf(" — %s", intel.EolInfo)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ---- Pathfinding unchanged in behaviour (minor safety fix in path recovery) ----
 func FindPreferredPath(graph map[int][]int, startID, endID int, esiClient *ESIClient, preference string, avoidList map[int]bool) []int {
 	costs := make(map[int]float64)
 	for id := range graph {
@@ -370,15 +448,24 @@ func FindPreferredPath(graph map[int][]int, startID, endID int, esiClient *ESICl
 			break
 		}
 
+		// pop current
 		pq = append(pq[:currentIndex], pq[currentIndex+1:]...)
 
 		if currentID == endID {
+			// Reconstruct path safely (stop if parent missing)
 			path := []int{}
-			for at := endID; at != 0; at = parents[at] {
+			at := endID
+			for {
 				path = append([]int{at}, path...)
 				if at == startID {
 					break
 				}
+				parent, ok := parents[at]
+				if !ok {
+					// Broken parent chain: abort
+					return nil
+				}
+				at = parent
 			}
 			return path
 		}
